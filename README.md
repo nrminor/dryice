@@ -9,13 +9,12 @@ Fast intermediate data representations for biological data. Don't put it in the 
 
 Like dry ice itself, `dryice` files are not intended for long-term storage, nor will it ever be optimized for minimal disk usage. Additionally, the current `dryice` format specification is rapidly evolving, meaning that (support for) your current `dryice` files may soon sublimate into thin air!
 
-That said, `dryice` and its output format has the following features:
+That said, `dryice` has the following features:
 
 - maximally compact, two-bit-packed nucleotides with support for the four canonical DNA bases
 - lossy encoding removes information like IUPAC ambiguous bases and alignment information from BAM files
 - control over how lossy a file is. For example, if you only want sequences and no quality scores, IDs, metadata, etc., you can do that!
 - want to put k-mers on dry ice instead of whole sequences? You can do that! Only want minimizers? You can do that too!
-- embedded byte offsets and statistics (placed at the end?)
 - parallelized read processing within an internal asynchronous streaming engine
 - fast conversion to and from FASTQ, gzipped-FASTQ, and BAM formats, as well as standard input and standard output. Converting a `dryice` file to a BAM file, for example, is significantly faster than converting FASTQ to BAM
 - direct conversion into tabular Apache Arrow format
