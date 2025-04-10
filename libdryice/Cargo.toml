@@ -1,0 +1,59 @@
+[package]
+name = "libdryice"
+description.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords.workspace = true
+exclude.workspace = true
+rust-version.workspace = true
+
+
+[dependencies]
+async-compression = "0.4.21"
+bincode = "2.0.1"
+bio-seq = { version = "0.14.2", features = [
+  "serde",
+  "translation",
+  "extra_codecs",
+] }
+bitcode = { version = "0.6.6", features = ["serde"] }
+color-eyre = "0.6.3"
+fern = "0.7.1"
+log = "0.4.26"
+noodles = { version = "0.95.0", features = [
+  "bam",
+  "bcf",
+  "bgzf",
+  "core",
+  "async",
+  "cram",
+  "csi",
+  "sam",
+  "fasta",
+  "fastq",
+  "tabix",
+  "vcf",
+  "htsget",
+  "refget",
+] }
+rayon = "1.10.0"
+serde = { version = "1.0.219", features = ["derive", "serde_derive"] }
+simd-minimizers = "1.0.0"
+thiserror = "2.0.12"
+tokio = { version = "1.44.1", features = ["full"] }
+zstd = "0.13.3"
+
+[dev-dependencies]
+assay = "0.1.1"
+biotest = { version = "0.2.0", features = [
+  "fasta",
+  "fastq",
+  "quality",
+  "sequence",
+  "vcf",
+] }
+pretty_assertions = "1.4.1"
+sccache = "0.10.0"

@@ -1,25 +1,94 @@
 *
-!.gitignore
-!Cargo.toml
+
+# project root files
 !README.md
 !LICENSE
-!.pre-commit-config.yml
-!.pre-commit-config.yaml
+!.gitignore
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!rustfmt.toml
+!rust-toolchain.toml
 !justfile
 !Dockerfile
-!INSTALL.sh
+!.pre-commit-config.yaml
+!.pre-commit-config.yml
 
-!/src
-!/src/*.rs
-
-!/tests
-
-!/examples
-
-!/docs
-
+# github files
 !/.github
+!/.github/workflows
+!/.github/*.yml
+!/.github/*.yaml
 !/.github/workflows
 !/.github/workflows/*.yml
 !/.github/workflows/*.yaml
+
+# assets directory
+!/assets
+
+# tests directory
+!/tests
+!/tests/test_*.py
+!/tests/*.rs
+
+# benches directory
+!/bench
+!/bench/*.rs
+!/bench/*.py
+
+# libdryice directory
+!/libdryice
+!/libdryice/README.md
+!/libdryice/LICENSE
+!/libdryice/Cargo.toml
+!/libdryice/Cargo.lock
+!/libdryice/build.rs
+!/libdryice/src
+!/libdryice/src/*.rs
+!/libdryice/src/io
+!/libdryice/src/io/*.rs
+!/libdryice/src/internals
+!/libdryice/src/internals/*.rs
+!/libdryice/src/internals/qc
+!/libdryice/src/internals/qc/*.rs
+!/libdryice/tests
+!/libdryice/tests/*.rs
+
+# dryice-macros directory
+!/dryice-macros
+!/dryice-macros/README.md
+!/dryice-macros/LICENSE
+!/dryice-macros/Cargo.toml
+!/dryice-macros/Cargo.lock
+!/dryice-macros/build.rs
+!/dryice-macros/src
+!/dryice-macros/src/*.rs
+!/dryice-macros/tests
+!/dryice-macros/tests/*.rs
+
+# dryice command line tool directory
+!/dryice
+!/dryice/README.md
+!/dryice/LICENSE
+!/dryice/Cargo.toml
+!/dryice/Cargo.lock
+!/dryice/build.rs
+!/dryice/src
+!/dryice/src/*.rs
+!/dryice/tests
+!/dryice/tests/*.rs
+
+# python dryice interface
+!/py-dryice
+!/py-dryice/README.md
+!/py-dryice/README.md
+!/py-dryice/Cargo.toml
+!/py-dryice/Cargo.lock
+!/py-dryice/pyproject.toml
+!/py-dryice/uv.lock
+!/py-dryice/build.rs
+!/py-dryice/src
+!/py-dryice/src/*.rs
+!/py-dryice/tests
+!/py-dryice/tests/*.rs
 
