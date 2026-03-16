@@ -1,94 +1,32 @@
+# Deny-by-default: ignore everything, explicitly allow tracked files.
+# All file tracking is intentional. No glob patterns allowed.
 *
 
-# project root files
-!README.md
-!LICENSE
-!.gitignore
-!Cargo.toml
-!Cargo.lock
-!build.rs
-!rustfmt.toml
-!rust-toolchain.toml
-!justfile
-!Dockerfile
-!.pre-commit-config.yaml
-!.pre-commit-config.yml
+# === Allowed: project configuration ===
+!/.gitignore
+!/Cargo.toml
+!/Cargo.lock
+!/justfile
+!/rustfmt.toml
+!/AGENTS.md
+!/README.md
+!/LICENSE
 
-# github files
+# === Allowed: agent configuration ===
+!/.agents
+!/.agents/dryice-design-first-pass.md
+!/.agents/dryice-rust-architecture-plan.md
+!/.agents/dryice-rust-design-notebook.md
+!/.agents/dryice-consolidated-work-plan.md
+
+# === Allowed: core crate ===
+!/dryice
+!/dryice/Cargo.toml
+!/dryice/src
+!/dryice/src/lib.rs
+
+# === Allowed: GitHub workflows ===
 !/.github
 !/.github/workflows
-!/.github/*.yml
-!/.github/*.yaml
-!/.github/workflows
-!/.github/workflows/*.yml
-!/.github/workflows/*.yaml
-
-# assets directory
-!/assets
-
-# tests directory
-!/tests
-!/tests/test_*.py
-!/tests/*.rs
-
-# benches directory
-!/bench
-!/bench/*.rs
-!/bench/*.py
-
-# libdryice directory
-!/libdryice
-!/libdryice/README.md
-!/libdryice/LICENSE
-!/libdryice/Cargo.toml
-!/libdryice/Cargo.lock
-!/libdryice/build.rs
-!/libdryice/src
-!/libdryice/src/*.rs
-!/libdryice/src/io
-!/libdryice/src/io/*.rs
-!/libdryice/src/internals
-!/libdryice/src/internals/*.rs
-!/libdryice/src/internals/qc
-!/libdryice/src/internals/qc/*.rs
-!/libdryice/tests
-!/libdryice/tests/*.rs
-
-# dryice-macros directory
-!/dryice-macros
-!/dryice-macros/README.md
-!/dryice-macros/LICENSE
-!/dryice-macros/Cargo.toml
-!/dryice-macros/Cargo.lock
-!/dryice-macros/build.rs
-!/dryice-macros/src
-!/dryice-macros/src/*.rs
-!/dryice-macros/tests
-!/dryice-macros/tests/*.rs
-
-# dryice command line tool directory
-!/dryice
-!/dryice/README.md
-!/dryice/LICENSE
-!/dryice/Cargo.toml
-!/dryice/Cargo.lock
-!/dryice/build.rs
-!/dryice/src
-!/dryice/src/*.rs
-!/dryice/tests
-!/dryice/tests/*.rs
-
-# python dryice interface
-!/py-dryice
-!/py-dryice/README.md
-!/py-dryice/README.md
-!/py-dryice/Cargo.toml
-!/py-dryice/Cargo.lock
-!/py-dryice/pyproject.toml
-!/py-dryice/uv.lock
-!/py-dryice/build.rs
-!/py-dryice/src
-!/py-dryice/src/*.rs
-!/py-dryice/tests
-!/py-dryice/tests/*.rs
-
+!/.github/workflows/build-rust.yaml
+!/.github/workflows/open-source-starter.yml

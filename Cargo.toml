@@ -1,35 +1,28 @@
 [workspace]
-members = [
-    "dryice",
-    "libdryice",
-    "dryice-macros"
-]
-resolver = "2"
+resolver = "3"
+members = ["dryice"]
 
 [workspace.package]
-description = ""
+version = "0.1.0"
 authors = ["Nicholas Minor <nicholasrminor@gmail.com>"]
 edition = "2024"
-readme = "README.md"
 license = "MIT"
-rust-version = "1.85.0"
 repository = "https://github.com/nrminor/dryice"
-homepage = "https://github.com/nrminor/dryice"
-documentation = "https://github.com/nrminor/dryice/blob/main/README.md"
-keywords = ["science", "reproducibility", "bioinformatics", "data"]
-categories = ["command-line-utilities", "science"]
-exclude = []
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+unwrap_used = "deny"
 
 [profile.dev]
 incremental = true
 lto = false
 
 [profile.release]
-lto = "fat"
-opt-level = "z"
+lto = true
 codegen-units = 1
-incremental = true
-panic = "abort"
-strip = "symbols"
-
-
+strip = true

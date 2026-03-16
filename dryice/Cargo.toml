@@ -1,17 +1,13 @@
 [package]
 name = "dryice"
-version = "0.1.0"
-description.workspace = true
-authors.workspace = true
+version.workspace = true
 edition.workspace = true
-readme.workspace = true
 license.workspace = true
-rust-version.workspace = true
 repository.workspace = true
-homepage.workspace = true
-documentation.workspace = true
-keywords.workspace = true
-categories.workspace = true
-exclude.workspace = true
+description = "High-throughput transient container for read-like genomic records"
 
 [dependencies]
+thiserror = "2"
+
+[lints]
+workspace = true
