@@ -42,5 +42,4 @@
 # === Allowed: GitHub workflows ===
 !/.github
 !/.github/workflows
-!/.github/workflows/build-rust.yaml
-!/.github/workflows/open-source-starter.yml
+!/.github/workflows/ci.yml
