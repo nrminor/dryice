@@ -72,6 +72,7 @@ mod io;
 pub mod key;
 mod record;
 
+pub use block::sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec};
 pub use codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding};
 pub use config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions};
 pub use error::DryIceError;

@@ -2,11 +2,11 @@
 
 use crate::{
     block::header::{BlockHeader, ByteRange},
-    codec::{NameEncoding, QualityEncoding},
+    codec::{NameEncoding, QualityEncoding, SequenceEncoding},
     error::DryIceError,
 };
 
-use super::index::RecordIndexEntry;
+use super::{index::RecordIndexEntry, sequence::decode_by_tag};
 
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
 const INDEX_ENTRY_SIZE: usize = 24;
@@ -14,8 +14,10 @@ const INDEX_ENTRY_SIZE: usize = 24;
 /// Decodes records from a single parsed block.
 ///
 /// Holds the block header, parsed index, and raw section bytes.
-/// The current record is accessed via borrowed slices into the
-/// block-owned buffers — no per-record allocation occurs.
+/// For `RawAscii` sequences, the current record is accessed via
+/// borrowed slices into block-owned buffers. For `TwoBitExact`,
+/// the current record's sequence is decoded into a reusable buffer
+/// on each advance.
 pub(crate) struct BlockDecoder {
     header: BlockHeader,
     index: Vec<RecordIndexEntry>,
@@ -25,6 +27,7 @@ pub(crate) struct BlockDecoder {
     record_key_bytes: Option<Vec<u8>>,
     cursor: usize,
     started: bool,
+    decoded_sequence_buf: Vec<u8>,
 }
 
 fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
@@ -103,18 +106,43 @@ impl BlockDecoder {
             record_key_bytes,
             cursor: 0,
             started: false,
+            decoded_sequence_buf: Vec::new(),
         })
     }
 
     /// Advance to the next record in this block.
-    pub fn advance(&mut self) -> bool {
+    ///
+    /// For `TwoBitExact` blocks, this eagerly decodes the next record's
+    /// sequence into a reusable internal buffer.
+    pub fn advance(&mut self) -> Result<bool, DryIceError> {
         if self.started {
             self.cursor += 1;
-            self.cursor < self.index.len()
         } else {
             self.started = true;
-            !self.index.is_empty()
         }
+
+        if self.cursor >= self.index.len() {
+            return Ok(false);
+        }
+
+        if self.header.sequence_encoding != SequenceEncoding::RawAscii {
+            self.decode_current_sequence()?;
+        }
+
+        Ok(true)
+    }
+
+    fn decode_current_sequence(&mut self) -> Result<(), DryIceError> {
+        let entry = &self.index[self.cursor];
+        let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
+        let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
+        let encoded = &self.sequence_bytes[start..start + len];
+
+        let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+
+        self.decoded_sequence_buf =
+            decode_by_tag(self.header.sequence_encoding, encoded, original_len)?;
+        Ok(())
     }
 
     /// The current record's name.
@@ -130,11 +158,19 @@ impl BlockDecoder {
     }
 
     /// The current record's sequence.
+    ///
+    /// For `RawAscii` blocks, returns a borrowed slice into block-owned
+    /// buffers. For `TwoBitExact` blocks, returns a slice into the
+    /// decoded sequence buffer (populated during `advance()`).
     pub fn current_sequence(&self) -> &[u8] {
-        let entry = &self.index[self.cursor];
-        let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
-        let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
-        &self.sequence_bytes[start..start + len]
+        if self.header.sequence_encoding == SequenceEncoding::RawAscii {
+            let entry = &self.index[self.cursor];
+            let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
+            let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
+            &self.sequence_bytes[start..start + len]
+        } else {
+            &self.decoded_sequence_buf
+        }
     }
 
     /// The current record's quality.

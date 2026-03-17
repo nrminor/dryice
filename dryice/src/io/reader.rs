@@ -103,7 +103,7 @@ impl<R: Read, K> DryIceReader<R, K> {
     /// decoded.
     pub fn next_record(&mut self) -> Result<bool, DryIceError> {
         if let Some(block) = &mut self.current_block
-            && block.advance()
+            && block.advance()?
         {
             return Ok(true);
         }
@@ -111,7 +111,7 @@ impl<R: Read, K> DryIceReader<R, K> {
         loop {
             if let Some(header) = format::read_block_header(&mut self.inner)? {
                 let mut decoder = BlockDecoder::from_header_and_reader(header, &mut self.inner)?;
-                if decoder.advance() {
+                if decoder.advance()? {
                     self.current_block = Some(decoder);
                     return Ok(true);
                 }

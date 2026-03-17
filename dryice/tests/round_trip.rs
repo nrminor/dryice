@@ -415,7 +415,7 @@ fn from_options_rejects_target_bytes() {
     };
 
     let buf = Vec::new();
-    let result = DryIceWriter::from_options(buf, &options);
+    let result = DryIceWriter::<_, dryice::RawAsciiCodec, _>::from_options(buf, &options);
     assert!(
         result.is_err(),
         "from_options should reject TargetBytes block size policy"
@@ -452,4 +452,88 @@ proptest! {
         let read_back = round_trip_iterator(&records, block_size);
         assert_records_equal(&records, &read_back);
     }
+}
+
+fn round_trip_two_bit_exact(records: &[SeqRecord], block_size: usize) -> Vec<SeqRecord> {
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .two_bit_exact()
+        .target_block_records(block_size)
+        .build();
+
+    for record in records {
+        writer
+            .write_record(record)
+            .expect("write_record should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::new(buf.as_slice()).expect("reader should open");
+    let mut result = Vec::new();
+    while reader.next_record().expect("next_record should succeed") {
+        result.push(
+            reader
+                .to_seq_record()
+                .expect("to_seq_record should succeed"),
+        );
+    }
+    result
+}
+
+#[test]
+fn two_bit_exact_round_trip_canonical_only() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGTACGT".to_vec(), b"!!!!!!!!".to_vec())
+            .expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCATGCA".to_vec(), b"########".to_vec())
+            .expect("valid record"),
+    ];
+    let read_back = round_trip_two_bit_exact(&records, 100);
+    assert_records_equal(&records, &read_back);
+}
+
+#[test]
+fn two_bit_exact_round_trip_with_ambiguity() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACNGTACGT".to_vec(), b"!!!!!!!!!".to_vec())
+            .expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"NNNNNN".to_vec(), b"!!!!!!".to_vec())
+            .expect("valid record"),
+        SeqRecord::new(
+            b"r3".to_vec(),
+            b"ACGTRYWSMK".to_vec(),
+            b"!!!!!!!!!!".to_vec(),
+        )
+        .expect("valid record"),
+    ];
+    let read_back = round_trip_two_bit_exact(&records, 100);
+    assert_records_equal(&records, &read_back);
+}
+
+#[test]
+fn two_bit_exact_round_trip_multiple_blocks() {
+    let records: Vec<SeqRecord> = (0..10)
+        .map(|i| {
+            let name = format!("read_{i}").into_bytes();
+            let seq = b"ACGTNNACGT".to_vec();
+            let qual = b"!!!!!!!!!!".to_vec();
+            SeqRecord::new(name, seq, qual).expect("valid record")
+        })
+        .collect();
+
+    let read_back = round_trip_two_bit_exact(&records, 3);
+    assert_records_equal(&records, &read_back);
+}
+
+#[test]
+fn two_bit_exact_round_trip_long_sequence_with_sparse_ambiguity() {
+    let mut seq = b"ACGT".repeat(2500);
+    seq[100] = b'N';
+    seq[5000] = b'R';
+    seq[9999] = b'Y';
+    let qual = vec![b'!'; seq.len()];
+    let records = vec![SeqRecord::new(b"long".to_vec(), seq, qual).expect("valid record")];
+    let read_back = round_trip_two_bit_exact(&records, 100);
+    assert_records_equal(&records, &read_back);
 }

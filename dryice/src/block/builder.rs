@@ -26,6 +26,7 @@ pub(crate) struct BlockBuilderConfig {
     pub record_key_width: Option<u16>,
     pub record_key_tag: Option<[u8; 16]>,
     pub target_records: usize,
+    pub sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 /// Accumulates records into a single block's worth of data.
@@ -41,6 +42,7 @@ pub(crate) struct BlockBuilder {
     record_key_width: u16,
     record_key_tag: [u8; 16],
     target_records: usize,
+    sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 impl BlockBuilder {
@@ -58,6 +60,7 @@ impl BlockBuilder {
             record_key_width: config.record_key_width.unwrap_or(0),
             record_key_tag: config.record_key_tag.unwrap_or([0; 16]),
             target_records: config.target_records,
+            sequence_encode_fn: config.sequence_encode_fn,
         }
     }
 
@@ -91,12 +94,12 @@ impl BlockBuilder {
 
     fn push_record_impl<R: SeqRecordLike>(&mut self, record: &R) -> Result<(), DryIceError> {
         let name = record.name();
-        let sequence = record.sequence();
+        let raw_sequence = record.sequence();
         let quality = record.quality();
 
-        if sequence.len() != quality.len() {
+        if raw_sequence.len() != quality.len() {
             return Err(DryIceError::MismatchedSequenceAndQualityLengths {
-                sequence_len: sequence.len(),
+                sequence_len: raw_sequence.len(),
                 quality_len: quality.len(),
             });
         }
@@ -105,18 +108,21 @@ impl BlockBuilder {
         let sequence_offset = to_u32(self.sequence_bytes.len(), "sequence section offset")?;
         let quality_offset = to_u32(self.quality_bytes.len(), "quality section offset")?;
         let name_len = to_u32(name.len(), "name length")?;
-        let sequence_len = to_u32(sequence.len(), "sequence length")?;
         let quality_len = to_u32(quality.len(), "quality length")?;
 
         self.name_bytes.extend_from_slice(name);
-        self.sequence_bytes.extend_from_slice(sequence);
+
+        let encoded = (self.sequence_encode_fn)(raw_sequence)?;
+        let encoded_sequence_len = to_u32(encoded.len(), "encoded sequence length")?;
+        self.sequence_bytes.extend_from_slice(&encoded);
+
         self.quality_bytes.extend_from_slice(quality);
 
         self.index.push(RecordIndexEntry {
             name_offset,
             name_len,
             sequence_offset,
-            sequence_len,
+            sequence_len: encoded_sequence_len,
             quality_offset,
             quality_len,
         });
