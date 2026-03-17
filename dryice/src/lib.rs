@@ -76,8 +76,8 @@ pub use block::{
     quality::{BinnedQualityCodec, OmittedQualityCodec, QualityCodec, RawQualityCodec},
     sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
 };
-pub use codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding};
-pub use config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions};
+pub use codec::{BlockSizePolicy, NameEncoding};
+pub use config::{BlockLayoutOptions, DryIceWriterOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter};
 pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};

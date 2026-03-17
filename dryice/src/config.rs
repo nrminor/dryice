@@ -1,37 +1,25 @@
 //! Writer and reader configuration types.
 //!
 //! This module defines the configuration objects that control how a
-//! `dryice` file is written. The underlying config is organized into
-//! logical groups, but the primary user-facing construction path is
-//! the flat builder on [`DryIceWriter`](crate::DryIceWriter).
+//! `dryice` file is written. The primary user-facing construction path
+//! is the builder on [`DryIceWriter`](crate::DryIceWriter). Sequence
+//! and quality codecs are selected via type parameters on the builder,
+//! not through this config.
 
-use crate::codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding};
+use crate::codec::{BlockSizePolicy, NameEncoding};
 
-/// Top-level configuration for an unkeyed [`DryIceWriter`](crate::DryIceWriter).
+/// Top-level configuration for a [`DryIceWriter`](crate::DryIceWriter).
 ///
-/// This struct groups encoding choices and block layout policy. Users
-/// typically do not construct this directly — instead, use the builder on
-/// `DryIceWriter`.
+/// This struct carries name encoding and block layout policy. Sequence
+/// and quality codecs are selected via type parameters on the writer
+/// builder, not through this struct.
 #[derive(Debug, Clone, Default)]
 pub struct DryIceWriterOptions {
-    /// Encoding choices for sequence, quality, and name data.
-    pub encoding: EncodingOptions,
+    /// How record names are encoded within blocks.
+    pub name_encoding: NameEncoding,
 
     /// Block layout and sizing policy.
     pub layout: BlockLayoutOptions,
-}
-
-/// Encoding choices for the three record field types.
-#[derive(Debug, Clone, Default)]
-pub struct EncodingOptions {
-    /// How nucleotide sequences are encoded within blocks.
-    pub sequence: SequenceEncoding,
-
-    /// How quality scores are encoded within blocks.
-    pub quality: QualityEncoding,
-
-    /// How record names are encoded within blocks.
-    pub names: NameEncoding,
 }
 
 /// Block layout and sizing policy.

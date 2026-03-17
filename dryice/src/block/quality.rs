@@ -1,6 +1,6 @@
 //! Quality codec trait and built-in implementations.
 
-use crate::{codec::QualityEncoding, error::DryIceError};
+use crate::error::DryIceError;
 
 /// A quality score encoding strategy for `dryice` blocks.
 ///
@@ -15,9 +15,6 @@ pub trait QualityCodec: Sized {
 
     /// Whether this encoding is lossy.
     const LOSSY: bool;
-
-    /// The internal [`QualityEncoding`] tag for the block header.
-    const ENCODING_TAG: QualityEncoding;
 
     /// Encode raw quality score bytes into the codec's format.
     ///
@@ -43,7 +40,6 @@ pub struct RawQualityCodec;
 impl QualityCodec for RawQualityCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:qual:raw!!!";
     const LOSSY: bool = false;
-    const ENCODING_TAG: QualityEncoding = QualityEncoding::Raw;
 
     fn encode(quality: &[u8]) -> Result<Vec<u8>, DryIceError> {
         Ok(quality.to_vec())
@@ -95,7 +91,6 @@ fn bin_phred(phred: u8) -> u8 {
 impl QualityCodec for BinnedQualityCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:qual:binned";
     const LOSSY: bool = true;
-    const ENCODING_TAG: QualityEncoding = QualityEncoding::Binned;
 
     fn encode(quality: &[u8]) -> Result<Vec<u8>, DryIceError> {
         Ok(quality
@@ -118,7 +113,6 @@ pub struct OmittedQualityCodec;
 impl QualityCodec for OmittedQualityCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:qual:omittd";
     const LOSSY: bool = true;
-    const ENCODING_TAG: QualityEncoding = QualityEncoding::Omitted;
 
     fn encode(_quality: &[u8]) -> Result<Vec<u8>, DryIceError> {
         Ok(Vec::new())
@@ -126,19 +120,6 @@ impl QualityCodec for OmittedQualityCodec {
 
     fn decode(_encoded: &[u8], _original_len: usize) -> Result<Vec<u8>, DryIceError> {
         Ok(Vec::new())
-    }
-}
-
-/// Decode a quality section using the encoding tag from the block header.
-pub(crate) fn decode_by_tag(
-    tag: QualityEncoding,
-    encoded: &[u8],
-    original_len: usize,
-) -> Result<Vec<u8>, DryIceError> {
-    match tag {
-        QualityEncoding::Raw => RawQualityCodec::decode(encoded, original_len),
-        QualityEncoding::Binned => BinnedQualityCodec::decode(encoded, original_len),
-        QualityEncoding::Omitted => OmittedQualityCodec::decode(encoded, original_len),
     }
 }
 

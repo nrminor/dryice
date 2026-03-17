@@ -9,7 +9,7 @@ use crate::{
         sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
     },
     codec::{BlockSizePolicy, NameEncoding},
-    config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions},
+    config::{BlockLayoutOptions, DryIceWriterOptions},
     error::DryIceError,
     format,
     key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey},
@@ -193,8 +193,8 @@ impl DryIceWriter<MissingInner, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
 impl<W, S: SequenceCodec, Q: QualityCodec> DryIceWriter<W, S, Q, NoRecordKey> {
     fn new_unkeyed(inner: W, name_encoding: NameEncoding, target_block_records: usize) -> Self {
         let block_builder = BlockBuilder::new(&BlockBuilderConfig {
-            sequence_encoding: S::ENCODING_TAG,
-            quality_encoding: Q::ENCODING_TAG,
+            sequence_codec_tag: S::TYPE_TAG,
+            quality_codec_tag: Q::TYPE_TAG,
             name_encoding,
             record_key_width: None,
             record_key_tag: None,
@@ -219,8 +219,8 @@ impl<W, S: SequenceCodec, Q: QualityCodec> DryIceWriter<W, S, Q, NoRecordKey> {
 impl<W, S: SequenceCodec, Q: QualityCodec, K: RecordKey> DryIceWriter<W, S, Q, K> {
     fn new_keyed(inner: W, name_encoding: NameEncoding, target_block_records: usize) -> Self {
         let block_builder = BlockBuilder::new(&BlockBuilderConfig {
-            sequence_encoding: S::ENCODING_TAG,
-            quality_encoding: Q::ENCODING_TAG,
+            sequence_codec_tag: S::TYPE_TAG,
+            quality_codec_tag: Q::TYPE_TAG,
             name_encoding,
             record_key_width: Some(K::WIDTH),
             record_key_tag: Some(K::TYPE_TAG),
@@ -273,20 +273,16 @@ impl<W: Write, S: SequenceCodec, Q: QualityCodec> DryIceWriter<W, S, Q, NoRecord
 
         Ok(Self::new_unkeyed(
             inner,
-            options.encoding.names,
+            options.name_encoding,
             target_block_records,
         ))
     }
 
-    /// Assemble the current configuration into an unkeyed options struct.
+    /// Assemble the current configuration into an options struct.
     #[must_use]
     pub fn options(&self) -> DryIceWriterOptions {
         DryIceWriterOptions {
-            encoding: EncodingOptions {
-                sequence: S::ENCODING_TAG,
-                quality: Q::ENCODING_TAG,
-                names: self.name_encoding,
-            },
+            name_encoding: self.name_encoding,
             layout: BlockLayoutOptions {
                 block_size: BlockSizePolicy::TargetRecords(self.target_block_records),
             },

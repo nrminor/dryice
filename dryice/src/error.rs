@@ -149,6 +149,26 @@ pub enum DryIceError {
         message: &'static str,
     },
 
+    /// The block's sequence codec tag does not match the reader's configured codec.
+    #[error(
+        "sequence codec mismatch: file contains tag {found:?}, but reader expects {expected:?}"
+    )]
+    SequenceCodecMismatch {
+        /// The tag the reader expected.
+        expected: [u8; 16],
+        /// The tag found in the block header.
+        found: [u8; 16],
+    },
+
+    /// The block's quality codec tag does not match the reader's configured codec.
+    #[error("quality codec mismatch: file contains tag {found:?}, but reader expects {expected:?}")]
+    QualityCodecMismatch {
+        /// The tag the reader expected.
+        expected: [u8; 16],
+        /// The tag found in the block header.
+        found: [u8; 16],
+    },
+
     /// A value exceeds the maximum representable size for the format.
     #[error("{field} exceeds u32 range")]
     SectionOverflow {

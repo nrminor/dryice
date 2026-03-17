@@ -1,6 +1,6 @@
 //! Block header and layout metadata.
 
-use crate::codec::{NameEncoding, QualityEncoding, SequenceEncoding};
+use crate::codec::NameEncoding;
 
 /// A byte range within a serialized block, identified by offset and length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub(crate) struct ByteRange {
 
 /// Header for a single block in a `dryice` file.
 ///
-/// Contains both the semantic metadata (encodings, record count) and
+/// Contains both the semantic metadata (codec tags, record count) and
 /// the layout metadata (byte ranges for each section within the block).
 /// This is a private type — users interact with blocks through the
 /// reader and writer APIs.
@@ -23,11 +23,11 @@ pub(crate) struct BlockHeader {
     /// Number of records in this block.
     pub record_count: u32,
 
-    /// How sequences are encoded in this block.
-    pub sequence_encoding: SequenceEncoding,
+    /// Stable type tag identifying the sequence codec.
+    pub sequence_codec_tag: [u8; 16],
 
-    /// How quality scores are encoded in this block.
-    pub quality_encoding: QualityEncoding,
+    /// Stable type tag identifying the quality codec.
+    pub quality_codec_tag: [u8; 16],
 
     /// How names are encoded in this block.
     pub name_encoding: NameEncoding,

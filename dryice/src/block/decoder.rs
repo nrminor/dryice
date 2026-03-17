@@ -2,14 +2,11 @@
 
 use crate::{
     block::header::{BlockHeader, ByteRange},
-    codec::{NameEncoding, QualityEncoding, SequenceEncoding},
+    codec::NameEncoding,
     error::DryIceError,
 };
 
-use super::{
-    index::RecordIndexEntry, quality::decode_by_tag as decode_quality_by_tag,
-    sequence::decode_by_tag as decode_sequence_by_tag,
-};
+use super::index::RecordIndexEntry;
 
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
 const INDEX_ENTRY_SIZE: usize = 24;
@@ -17,10 +14,8 @@ const INDEX_ENTRY_SIZE: usize = 24;
 /// Decodes records from a single parsed block.
 ///
 /// Holds the block header, parsed index, and raw section bytes.
-/// For `RawAscii` sequences, the current record is accessed via
-/// borrowed slices into block-owned buffers. For `TwoBitExact`,
-/// the current record's sequence is decoded into a reusable buffer
-/// on each advance.
+/// Sequence and quality decoding is driven by the reader, which
+/// knows the codec types statically and calls their decode methods.
 pub(crate) struct BlockDecoder {
     header: BlockHeader,
     index: Vec<RecordIndexEntry>,
@@ -83,13 +78,13 @@ impl BlockDecoder {
         let mut sequence_bytes = vec![0u8; seq_len];
         reader.read_exact(&mut sequence_bytes)?;
 
-        let quality_bytes = if header.quality_encoding == QualityEncoding::Omitted {
-            None
-        } else {
+        let quality_bytes = if header.qualities.is_some() {
             let len = section_len(header.qualities)?;
             let mut buf = vec![0u8; len];
             reader.read_exact(&mut buf)?;
             Some(buf)
+        } else {
+            None
         };
 
         let record_key_bytes = if header.record_keys.is_some() {
@@ -117,9 +112,13 @@ impl BlockDecoder {
 
     /// Advance to the next record in this block.
     ///
-    /// For `TwoBitExact` blocks, this eagerly decodes the next record's
-    /// sequence into a reusable internal buffer.
-    pub fn advance(&mut self) -> Result<bool, DryIceError> {
+    /// `seq_decode_fn` and `qual_decode_fn` are the statically-known
+    /// codec decode functions provided by the reader.
+    pub fn advance(
+        &mut self,
+        seq_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+        qual_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+    ) -> Result<bool, DryIceError> {
         if self.started {
             self.cursor += 1;
         } else {
@@ -130,18 +129,16 @@ impl BlockDecoder {
             return Ok(false);
         }
 
-        if self.header.sequence_encoding != SequenceEncoding::RawAscii {
-            self.decode_current_sequence()?;
-        }
-
-        if self.header.quality_encoding != QualityEncoding::Raw {
-            self.decode_current_quality()?;
-        }
+        self.decode_current_sequence(seq_decode_fn)?;
+        self.decode_current_quality(qual_decode_fn)?;
 
         Ok(true)
     }
 
-    fn decode_current_sequence(&mut self) -> Result<(), DryIceError> {
+    fn decode_current_sequence(
+        &mut self,
+        decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+    ) -> Result<(), DryIceError> {
         let entry = &self.index[self.cursor];
         let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
         let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
@@ -149,22 +146,23 @@ impl BlockDecoder {
 
         let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
 
-        self.decoded_sequence_buf =
-            decode_sequence_by_tag(self.header.sequence_encoding, encoded, original_len)?;
+        self.decoded_sequence_buf = decode_fn(encoded, original_len)?;
         Ok(())
     }
 
-    fn decode_current_quality(&mut self) -> Result<(), DryIceError> {
-        let entry = &self.index[self.cursor];
+    fn decode_current_quality(
+        &mut self,
+        decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+    ) -> Result<(), DryIceError> {
         if let Some(quals) = &self.quality_bytes {
+            let entry = &self.index[self.cursor];
             let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
             let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
             let encoded = &quals[start..start + len];
 
             let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
 
-            self.decoded_quality_buf =
-                decode_quality_by_tag(self.header.quality_encoding, encoded, original_len)?;
+            self.decoded_quality_buf = decode_fn(encoded, original_len)?;
         } else {
             self.decoded_quality_buf.clear();
         }
@@ -183,36 +181,14 @@ impl BlockDecoder {
         }
     }
 
-    /// The current record's sequence.
-    ///
-    /// For `RawAscii` blocks, returns a borrowed slice into block-owned
-    /// buffers. For `TwoBitExact` blocks, returns a slice into the
-    /// decoded sequence buffer (populated during `advance()`).
+    /// The current record's decoded sequence.
     pub fn current_sequence(&self) -> &[u8] {
-        if self.header.sequence_encoding == SequenceEncoding::RawAscii {
-            let entry = &self.index[self.cursor];
-            let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
-            let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
-            &self.sequence_bytes[start..start + len]
-        } else {
-            &self.decoded_sequence_buf
-        }
+        &self.decoded_sequence_buf
     }
 
-    /// The current record's quality.
+    /// The current record's decoded quality.
     pub fn current_quality(&self) -> &[u8] {
-        if self.header.quality_encoding == QualityEncoding::Raw {
-            let entry = &self.index[self.cursor];
-            if let Some(quals) = &self.quality_bytes {
-                let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
-                let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
-                &quals[start..start + len]
-            } else {
-                &[]
-            }
-        } else {
-            &self.decoded_quality_buf
-        }
+        &self.decoded_quality_buf
     }
 
     /// Verify that the block's record-key metadata matches the configured key type.

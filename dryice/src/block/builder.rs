@@ -1,8 +1,11 @@
 //! Block assembly from incoming records.
 
 use crate::{
-    block::header::{BlockHeader, ByteRange},
-    codec::{NameEncoding, QualityEncoding, SequenceEncoding},
+    block::{
+        header::{BlockHeader, ByteRange},
+        quality::OmittedQualityCodec,
+    },
+    codec::NameEncoding,
     error::DryIceError,
     format,
     key::RecordKey,
@@ -20,8 +23,8 @@ fn to_u32(value: usize, field: &'static str) -> Result<u32, DryIceError> {
 
 /// Configuration needed to construct a [`BlockBuilder`].
 pub(crate) struct BlockBuilderConfig {
-    pub sequence_encoding: SequenceEncoding,
-    pub quality_encoding: QualityEncoding,
+    pub sequence_codec_tag: [u8; 16],
+    pub quality_codec_tag: [u8; 16],
     pub name_encoding: NameEncoding,
     pub record_key_width: Option<u16>,
     pub record_key_tag: Option<[u8; 16]>,
@@ -37,8 +40,8 @@ pub(crate) struct BlockBuilder {
     sequence_bytes: Vec<u8>,
     quality_bytes: Vec<u8>,
     record_key_bytes: Option<Vec<u8>>,
-    sequence_encoding: SequenceEncoding,
-    quality_encoding: QualityEncoding,
+    sequence_codec_tag: [u8; 16],
+    quality_codec_tag: [u8; 16],
     name_encoding: NameEncoding,
     record_key_width: u16,
     record_key_tag: [u8; 16],
@@ -56,8 +59,8 @@ impl BlockBuilder {
             sequence_bytes: Vec::new(),
             quality_bytes: Vec::new(),
             record_key_bytes: config.record_key_width.map(|_| Vec::new()),
-            sequence_encoding: config.sequence_encoding,
-            quality_encoding: config.quality_encoding,
+            sequence_codec_tag: config.sequence_codec_tag,
+            quality_codec_tag: config.quality_codec_tag,
             name_encoding: config.name_encoding,
             record_key_width: config.record_key_width.unwrap_or(0),
             record_key_tag: config.record_key_tag.unwrap_or([0; 16]),
@@ -163,10 +166,13 @@ impl BlockBuilder {
         let qualities_offset = sequences_offset + seq_len;
         let record_keys_offset = qualities_offset + qual_len;
 
+        let quality_omitted = self.quality_codec_tag
+            == <OmittedQualityCodec as crate::block::quality::QualityCodec>::TYPE_TAG;
+
         let header = BlockHeader {
             record_count,
-            sequence_encoding: self.sequence_encoding,
-            quality_encoding: self.quality_encoding,
+            sequence_codec_tag: self.sequence_codec_tag,
+            quality_codec_tag: self.quality_codec_tag,
             name_encoding: self.name_encoding,
             record_key_width: self.record_key_width,
             record_key_tag: self.record_key_tag,
@@ -186,7 +192,7 @@ impl BlockBuilder {
                 offset: sequences_offset,
                 len: seq_len,
             },
-            qualities: if self.quality_encoding == QualityEncoding::Omitted {
+            qualities: if quality_omitted {
                 None
             } else {
                 Some(ByteRange {

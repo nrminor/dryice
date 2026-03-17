@@ -1,6 +1,6 @@
 //! Sequence codec trait and built-in implementations.
 
-use crate::{codec::SequenceEncoding, error::DryIceError};
+use crate::error::DryIceError;
 
 /// A sequence encoding strategy for `dryice` blocks.
 ///
@@ -15,9 +15,6 @@ pub trait SequenceCodec: Sized {
 
     /// Whether this encoding is lossy.
     const LOSSY: bool;
-
-    /// The internal [`SequenceEncoding`] tag for the block header.
-    const ENCODING_TAG: SequenceEncoding;
 
     /// Encode a raw ASCII nucleotide sequence into the codec's format.
     ///
@@ -45,7 +42,6 @@ pub struct RawAsciiCodec;
 impl SequenceCodec for RawAsciiCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:raw-asc";
     const LOSSY: bool = false;
-    const ENCODING_TAG: SequenceEncoding = SequenceEncoding::RawAscii;
 
     fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
         Ok(sequence.to_vec())
@@ -78,7 +74,6 @@ pub struct TwoBitExactCodec;
 impl SequenceCodec for TwoBitExactCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:2b-exct";
     const LOSSY: bool = false;
-    const ENCODING_TAG: SequenceEncoding = SequenceEncoding::TwoBitExact;
 
     fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
         let mut canonical = Vec::with_capacity(sequence.len());
@@ -197,23 +192,6 @@ impl SequenceCodec for TwoBitExactCodec {
 
 fn is_canonical(base: u8) -> bool {
     matches!(base, b'A' | b'a' | b'C' | b'c' | b'G' | b'g' | b'T' | b't')
-}
-
-/// Decode a sequence section using the encoding tag from the block header.
-/// This is used by the block decoder when the codec type is not known
-/// statically (e.g. when reading files written by other configurations).
-pub(crate) fn decode_by_tag(
-    tag: SequenceEncoding,
-    encoded: &[u8],
-    original_len: usize,
-) -> Result<Vec<u8>, DryIceError> {
-    match tag {
-        SequenceEncoding::RawAscii => RawAsciiCodec::decode(encoded, original_len),
-        SequenceEncoding::TwoBitExact => TwoBitExactCodec::decode(encoded, original_len),
-        SequenceEncoding::TwoBitLossyN => Err(DryIceError::InvalidSequenceInput {
-            message: "TwoBitLossyN decoding is not yet implemented",
-        }),
-    }
 }
 
 #[cfg(test)]
