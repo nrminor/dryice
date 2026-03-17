@@ -17,26 +17,13 @@ const INDEX_ENTRY_SIZE: usize = 24;
 /// The current record is accessed via borrowed slices into the
 /// block-owned buffers — no per-record allocation occurs.
 pub(crate) struct BlockDecoder {
-    /// The parsed block header.
-    #[allow(dead_code)]
     header: BlockHeader,
-
-    /// Parsed record index entries.
     index: Vec<RecordIndexEntry>,
-
-    /// Raw name section bytes, if present.
     name_bytes: Option<Vec<u8>>,
-
-    /// Raw sequence section bytes.
     sequence_bytes: Vec<u8>,
-
-    /// Raw quality section bytes, if present.
     quality_bytes: Option<Vec<u8>>,
-
-    /// Index of the current record (the one most recently advanced to).
+    record_key_bytes: Option<Vec<u8>>,
     cursor: usize,
-
-    /// Whether the decoder has been advanced at least once.
     started: bool,
 }
 
@@ -48,13 +35,7 @@ fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
 }
 
 impl BlockDecoder {
-    /// Parse a block's payload from the reader, given an already-parsed
-    /// block header.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the payload cannot be read or is inconsistent
-    /// with the header.
+    /// Parse a block's payload from the reader, given an already-parsed block header.
     pub fn from_header_and_reader<R: std::io::Read>(
         header: BlockHeader,
         reader: &mut R,
@@ -104,23 +85,28 @@ impl BlockDecoder {
             Some(buf)
         };
 
+        let record_key_bytes = if header.record_keys.is_some() {
+            let len = section_len(header.record_keys)?;
+            let mut buf = vec![0u8; len];
+            reader.read_exact(&mut buf)?;
+            Some(buf)
+        } else {
+            None
+        };
+
         Ok(Self {
             header,
             index,
             name_bytes,
             sequence_bytes,
             quality_bytes,
+            record_key_bytes,
             cursor: 0,
             started: false,
         })
     }
 
     /// Advance to the next record in this block.
-    ///
-    /// Returns `true` if a record is now current, `false` if the block
-    /// is exhausted. After this returns `true`, the current record's
-    /// fields can be accessed via `current_name()`, `current_sequence()`,
-    /// and `current_quality()`.
     pub fn advance(&mut self) -> bool {
         if self.started {
             self.cursor += 1;
@@ -131,51 +117,63 @@ impl BlockDecoder {
         }
     }
 
-    /// The current record's name, as a borrowed slice into block-owned
-    /// buffers. Returns an empty slice if names are omitted.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called before `advance()` or after the block is exhausted.
+    /// The current record's name.
     pub fn current_name(&self) -> &[u8] {
         let entry = &self.index[self.cursor];
         if let Some(names) = &self.name_bytes {
-            let start = entry.name_offset as usize;
-            let end = start + entry.name_len as usize;
-            &names[start..end]
+            let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
+            let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
+            &names[start..start + len]
         } else {
             &[]
         }
     }
 
-    /// The current record's sequence, as a borrowed slice into
-    /// block-owned buffers.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called before `advance()` or after the block is exhausted.
+    /// The current record's sequence.
     pub fn current_sequence(&self) -> &[u8] {
         let entry = &self.index[self.cursor];
-        let start = entry.sequence_offset as usize;
-        let end = start + entry.sequence_len as usize;
-        &self.sequence_bytes[start..end]
+        let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
+        let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
+        &self.sequence_bytes[start..start + len]
     }
 
-    /// The current record's quality, as a borrowed slice into
-    /// block-owned buffers. Returns an empty slice if qualities are
-    /// omitted.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called before `advance()` or after the block is exhausted.
+    /// The current record's quality.
     pub fn current_quality(&self) -> &[u8] {
         let entry = &self.index[self.cursor];
         if let Some(quals) = &self.quality_bytes {
-            let start = entry.quality_offset as usize;
-            let end = start + entry.quality_len as usize;
-            &quals[start..end]
+            let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+            let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+            &quals[start..start + len]
         } else {
             &[]
         }
+    }
+
+    /// Verify that the block's record-key metadata matches the configured key type.
+    pub fn verify_record_key<K: crate::key::RecordKey>(&self) -> Result<(), DryIceError> {
+        if self.header.record_keys.is_none() {
+            return Err(DryIceError::MissingRecordKeySection);
+        }
+        if self.header.record_key_width != K::WIDTH || self.header.record_key_tag != K::TYPE_TAG {
+            return Err(DryIceError::RecordKeyTypeMismatch);
+        }
+        Ok(())
+    }
+
+    /// The current record's encoded key bytes.
+    pub fn current_record_key_bytes(&self) -> Result<&[u8], DryIceError> {
+        let key_bytes = self
+            .record_key_bytes
+            .as_ref()
+            .ok_or(DryIceError::MissingRecordKeySection)?;
+        let width = usize::from(self.header.record_key_width);
+        let start = self.cursor * width;
+        let end = start + width;
+        key_bytes
+            .get(start..end)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "record-key bytes out of range",
+            })
     }
 }

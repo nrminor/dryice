@@ -39,6 +39,7 @@
 !/dryice/src/io.rs
 !/dryice/src/io/reader.rs
 !/dryice/src/io/writer.rs
+!/dryice/src/key.rs
 !/dryice/tests
 !/dryice/tests/round_trip.rs
 

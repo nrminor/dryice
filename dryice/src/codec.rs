@@ -56,13 +56,3 @@ pub enum BlockSizePolicy {
     /// Target a specific approximate byte size per block.
     TargetBytes(usize),
 }
-
-/// The kind of sort key stored in an accelerator section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SortKeyKind {
-    /// A 64-bit minimizer-derived sort key.
-    U64Minimizer,
-
-    /// A 128-bit minimizer-derived sort key.
-    U128Minimizer,
-}

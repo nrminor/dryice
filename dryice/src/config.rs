@@ -5,13 +5,12 @@
 //! logical groups, but the primary user-facing construction path is
 //! the flat builder on [`DryIceWriter`](crate::DryIceWriter).
 
-use crate::codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind};
+use crate::codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding};
 
-/// Top-level configuration for a [`DryIceWriter`](crate::DryIceWriter).
+/// Top-level configuration for an unkeyed [`DryIceWriter`](crate::DryIceWriter).
 ///
-/// This struct groups encoding choices, block layout policy, and
-/// optional accelerator configuration. Users typically do not
-/// construct this directly — instead, use the builder on
+/// This struct groups encoding choices and block layout policy. Users
+/// typically do not construct this directly — instead, use the builder on
 /// `DryIceWriter`.
 #[derive(Debug, Clone, Default)]
 pub struct DryIceWriterOptions {
@@ -20,9 +19,6 @@ pub struct DryIceWriterOptions {
 
     /// Block layout and sizing policy.
     pub layout: BlockLayoutOptions,
-
-    /// Optional sort key to store as an accelerator section.
-    pub sort_key: Option<SortKeyKind>,
 }
 
 /// Encoding choices for the three record field types.

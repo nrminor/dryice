@@ -1,14 +1,14 @@
 //! On-disk binary format definitions for `dryice` files.
 //!
-//! This module defines the constants, serialization, and
-//! deserialization logic for the file header and block header.
-//! All integer fields in the format are little-endian.
+//! This module defines the constants, serialization, and deserialization
+//! logic for the file header and block header. All integer fields in the
+//! format are little-endian.
 
 use std::io::{Read, Write};
 
 use crate::{
     block::header::{BlockHeader, ByteRange},
-    codec::{NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind},
+    codec::{NameEncoding, QualityEncoding, SequenceEncoding},
     error::DryIceError,
 };
 
@@ -32,14 +32,16 @@ const FILE_HEADER_SIZE: usize = 8;
 /// [1 byte]   sequence_encoding   u8
 /// [1 byte]   quality_encoding    u8
 /// [1 byte]   name_encoding       u8
-/// [1 byte]   sort_key_kind       u8
+/// [1 byte]   has_record_key      u8
+/// [2 bytes]  record_key_width    u16 le
+/// [16 bytes] record_key_tag      [u8; 16]
 /// [16 bytes] index range         offset u64 le + len u64 le
 /// [16 bytes] names range         offset u64 le + len u64 le
 /// [16 bytes] sequences range     offset u64 le + len u64 le
 /// [16 bytes] qualities range     offset u64 le + len u64 le
-/// [16 bytes] sort_keys range     offset u64 le + len u64 le
+/// [16 bytes] record_keys range   offset u64 le + len u64 le
 /// ```
-const BLOCK_HEADER_SIZE: usize = 88;
+const BLOCK_HEADER_SIZE: usize = 106;
 
 const SEQ_TAG_RAW_ASCII: u8 = 0;
 const SEQ_TAG_TWO_BIT_EXACT: u8 = 1;
@@ -52,15 +54,7 @@ const QUAL_TAG_OMITTED: u8 = 2;
 const NAME_TAG_RAW: u8 = 0;
 const NAME_TAG_OMITTED: u8 = 1;
 
-const SORT_KEY_TAG_NONE: u8 = 0;
-const SORT_KEY_TAG_U64_MINIMIZER: u8 = 1;
-const SORT_KEY_TAG_U128_MINIMIZER: u8 = 2;
-
 /// Write the file header to the given writer.
-///
-/// # Errors
-///
-/// Returns an error if the write fails.
 pub(crate) fn write_file_header<W: Write>(writer: &mut W) -> Result<(), DryIceError> {
     let mut buf = [0u8; FILE_HEADER_SIZE];
     buf[0..4].copy_from_slice(&MAGIC);
@@ -71,11 +65,6 @@ pub(crate) fn write_file_header<W: Write>(writer: &mut W) -> Result<(), DryIceEr
 }
 
 /// Read and validate the file header from the given reader.
-///
-/// # Errors
-///
-/// Returns an error if the magic bytes are invalid or the format
-/// version is not supported.
 pub(crate) fn read_file_header<R: Read>(reader: &mut R) -> Result<(u16, u16), DryIceError> {
     let mut buf = [0u8; FILE_HEADER_SIZE];
     reader.read_exact(&mut buf)?;
@@ -151,25 +140,6 @@ fn tag_to_name_encoding(tag: u8) -> Result<NameEncoding, DryIceError> {
     }
 }
 
-fn sort_key_kind_to_tag(kind: Option<SortKeyKind>) -> u8 {
-    match kind {
-        None => SORT_KEY_TAG_NONE,
-        Some(SortKeyKind::U64Minimizer) => SORT_KEY_TAG_U64_MINIMIZER,
-        Some(SortKeyKind::U128Minimizer) => SORT_KEY_TAG_U128_MINIMIZER,
-    }
-}
-
-fn tag_to_sort_key_kind(tag: u8) -> Result<Option<SortKeyKind>, DryIceError> {
-    match tag {
-        SORT_KEY_TAG_NONE => Ok(None),
-        SORT_KEY_TAG_U64_MINIMIZER => Ok(Some(SortKeyKind::U64Minimizer)),
-        SORT_KEY_TAG_U128_MINIMIZER => Ok(Some(SortKeyKind::U128Minimizer)),
-        _ => Err(DryIceError::CorruptBlockHeader {
-            message: "unknown sort key tag",
-        }),
-    }
-}
-
 fn write_byte_range(buf: &mut [u8], range: ByteRange) {
     buf[0..8].copy_from_slice(&range.offset.to_le_bytes());
     buf[8..16].copy_from_slice(&range.len.to_le_bytes());
@@ -191,10 +161,6 @@ fn read_byte_range(buf: &[u8]) -> ByteRange {
 }
 
 /// Write a block header to the given writer.
-///
-/// # Errors
-///
-/// Returns an error if the write fails.
 pub(crate) fn write_block_header<W: Write>(
     writer: &mut W,
     header: &BlockHeader,
@@ -205,26 +171,21 @@ pub(crate) fn write_block_header<W: Write>(
     buf[4] = sequence_encoding_to_tag(header.sequence_encoding);
     buf[5] = quality_encoding_to_tag(header.quality_encoding);
     buf[6] = name_encoding_to_tag(header.name_encoding);
-    buf[7] = sort_key_kind_to_tag(header.sort_key_kind);
+    buf[7] = u8::from(header.record_keys.is_some());
+    buf[8..10].copy_from_slice(&header.record_key_width.to_le_bytes());
+    buf[10..26].copy_from_slice(&header.record_key_tag);
 
-    write_byte_range(&mut buf[8..24], header.index);
-    write_optional_byte_range(&mut buf[24..40], header.names);
-    write_byte_range(&mut buf[40..56], header.sequences);
-    write_optional_byte_range(&mut buf[56..72], header.qualities);
-    write_optional_byte_range(&mut buf[72..88], header.sort_keys);
+    write_byte_range(&mut buf[26..42], header.index);
+    write_optional_byte_range(&mut buf[42..58], header.names);
+    write_byte_range(&mut buf[58..74], header.sequences);
+    write_optional_byte_range(&mut buf[74..90], header.qualities);
+    write_optional_byte_range(&mut buf[90..106], header.record_keys);
 
     writer.write_all(&buf)?;
     Ok(())
 }
 
 /// Read a block header from the given reader.
-///
-/// Returns `None` at EOF (no more blocks). Returns an error if the
-/// header is partially present or corrupt.
-///
-/// # Errors
-///
-/// Returns an error if the block header cannot be parsed.
 pub(crate) fn read_block_header<R: Read>(
     reader: &mut R,
 ) -> Result<Option<BlockHeader>, DryIceError> {
@@ -240,13 +201,17 @@ pub(crate) fn read_block_header<R: Read>(
     let sequence_encoding = tag_to_sequence_encoding(buf[4])?;
     let quality_encoding = tag_to_quality_encoding(buf[5])?;
     let name_encoding = tag_to_name_encoding(buf[6])?;
-    let sort_key_kind = tag_to_sort_key_kind(buf[7])?;
+    let has_record_key = buf[7] != 0;
+    let record_key_width = u16::from_le_bytes([buf[8], buf[9]]);
+    let record_key_tag: [u8; 16] = buf[10..26]
+        .try_into()
+        .expect("record key tag slice should have length 16");
 
-    let index = read_byte_range(&buf[8..24]);
-    let names_range = read_byte_range(&buf[24..40]);
-    let sequences = read_byte_range(&buf[40..56]);
-    let qualities_range = read_byte_range(&buf[56..72]);
-    let sort_keys_range = read_byte_range(&buf[72..88]);
+    let index = read_byte_range(&buf[26..42]);
+    let names_range = read_byte_range(&buf[42..58]);
+    let sequences = read_byte_range(&buf[58..74]);
+    let qualities_range = read_byte_range(&buf[74..90]);
+    let record_keys_range = read_byte_range(&buf[90..106]);
 
     let names = if name_encoding == NameEncoding::Omitted {
         None
@@ -260,10 +225,10 @@ pub(crate) fn read_block_header<R: Read>(
         Some(qualities_range)
     };
 
-    let sort_keys = if sort_key_kind.is_none() {
-        None
+    let record_keys = if has_record_key {
+        Some(record_keys_range)
     } else {
-        Some(sort_keys_range)
+        None
     };
 
     Ok(Some(BlockHeader {
@@ -271,12 +236,13 @@ pub(crate) fn read_block_header<R: Read>(
         sequence_encoding,
         quality_encoding,
         name_encoding,
-        sort_key_kind,
+        record_key_width,
+        record_key_tag,
         index,
         names,
         sequences,
         qualities,
-        sort_keys,
+        record_keys,
     }))
 }
 
@@ -309,7 +275,8 @@ mod tests {
             sequence_encoding: SequenceEncoding::TwoBitExact,
             quality_encoding: QualityEncoding::Binned,
             name_encoding: NameEncoding::Raw,
-            sort_key_kind: Some(SortKeyKind::U128Minimizer),
+            record_key_width: 16,
+            record_key_tag: *b"dryi:bytes16:key",
             index: ByteRange {
                 offset: 0,
                 len: 100,
@@ -326,7 +293,7 @@ mod tests {
                 offset: 700,
                 len: 400,
             }),
-            sort_keys: Some(ByteRange {
+            record_keys: Some(ByteRange {
                 offset: 1100,
                 len: 84,
             }),
@@ -340,16 +307,17 @@ mod tests {
             .expect("read should succeed")
             .expect("should not be EOF");
 
-        assert_eq!(parsed.record_count, 42);
-        assert_eq!(parsed.sequence_encoding, SequenceEncoding::TwoBitExact);
-        assert_eq!(parsed.quality_encoding, QualityEncoding::Binned);
-        assert_eq!(parsed.name_encoding, NameEncoding::Raw);
-        assert_eq!(parsed.sort_key_kind, Some(SortKeyKind::U128Minimizer));
+        assert_eq!(parsed.record_count, header.record_count);
+        assert_eq!(parsed.sequence_encoding, header.sequence_encoding);
+        assert_eq!(parsed.quality_encoding, header.quality_encoding);
+        assert_eq!(parsed.name_encoding, header.name_encoding);
+        assert_eq!(parsed.record_key_width, header.record_key_width);
+        assert_eq!(parsed.record_key_tag, header.record_key_tag);
         assert_eq!(parsed.index, header.index);
         assert_eq!(parsed.names, header.names);
         assert_eq!(parsed.sequences, header.sequences);
         assert_eq!(parsed.qualities, header.qualities);
-        assert_eq!(parsed.sort_keys, header.sort_keys);
+        assert_eq!(parsed.record_keys, header.record_keys);
     }
 
     #[test]
@@ -359,7 +327,8 @@ mod tests {
             sequence_encoding: SequenceEncoding::RawAscii,
             quality_encoding: QualityEncoding::Omitted,
             name_encoding: NameEncoding::Omitted,
-            sort_key_kind: None,
+            record_key_width: 0,
+            record_key_tag: [0; 16],
             index: ByteRange { offset: 0, len: 50 },
             names: None,
             sequences: ByteRange {
@@ -367,7 +336,7 @@ mod tests {
                 len: 100,
             },
             qualities: None,
-            sort_keys: None,
+            record_keys: None,
         };
 
         let mut buf = Vec::new();
@@ -380,10 +349,11 @@ mod tests {
         assert_eq!(parsed.record_count, 10);
         assert_eq!(parsed.name_encoding, NameEncoding::Omitted);
         assert_eq!(parsed.quality_encoding, QualityEncoding::Omitted);
-        assert_eq!(parsed.sort_key_kind, None);
+        assert_eq!(parsed.record_key_width, 0);
+        assert_eq!(parsed.record_key_tag, [0; 16]);
         assert!(parsed.names.is_none());
         assert!(parsed.qualities.is_none());
-        assert!(parsed.sort_keys.is_none());
+        assert!(parsed.record_keys.is_none());
     }
 
     #[test]

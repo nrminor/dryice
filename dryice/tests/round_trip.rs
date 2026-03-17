@@ -1,7 +1,8 @@
 //! Integration tests for dryice format round-trip fidelity.
 
 use dryice::{
-    DryIceReader, DryIceWriter, DryIceWriterOptions, SeqRecord, SeqRecordExt, SeqRecordLike,
+    Bytes8Key, Bytes16Key, DryIceReader, DryIceWriter, DryIceWriterOptions, RecordKey, SeqRecord,
+    SeqRecordExt, SeqRecordLike,
 };
 use proptest::prelude::*;
 
@@ -81,6 +82,47 @@ fn round_trip_iterator(records: &[SeqRecord], block_size: usize) -> Vec<SeqRecor
         .into_records()
         .collect::<Result<Vec<_>, _>>()
         .expect("all records should decode")
+}
+
+fn round_trip_zero_copy_keyed<K>(
+    records: &[SeqRecord],
+    keys: &[K],
+    block_size: usize,
+) -> (Vec<SeqRecord>, Vec<K>)
+where
+    K: RecordKey + Clone,
+{
+    assert_eq!(records.len(), keys.len(), "records and keys must align");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .record_key::<K>()
+        .target_block_records(block_size)
+        .build();
+
+    for (record, key) in records.iter().zip(keys.iter()) {
+        writer
+            .write_record_with_key(record, key)
+            .expect("write_record_with_key should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader =
+        DryIceReader::with_record_key::<K>(buf.as_slice()).expect("reader should open");
+    let mut out_records = Vec::new();
+    let mut out_keys = Vec::new();
+
+    while reader.next_record().expect("next_record should succeed") {
+        out_records.push(
+            reader
+                .to_seq_record()
+                .expect("to_seq_record should succeed"),
+        );
+        out_keys.push(reader.record_key().expect("record_key should decode"));
+    }
+
+    (out_records, out_keys)
 }
 
 #[test]
@@ -232,6 +274,79 @@ fn zero_copy_reader_to_writer_pipe() {
 }
 
 #[test]
+fn keyed_round_trip_with_built_in_bytes8_key() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"####".to_vec()).expect("valid record"),
+    ];
+    let keys = vec![Bytes8Key(*b"key00001"), Bytes8Key(*b"key00002")];
+
+    let (read_back, read_keys) = round_trip_zero_copy_keyed(&records, &keys, 100);
+    assert_records_equal(&records, &read_back);
+    assert_eq!(keys, read_keys);
+}
+
+#[test]
+fn keyed_round_trip_with_built_in_bytes16_key_helpers() {
+    let records = [
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
+    ];
+    let keys = [Bytes16Key(*b"bytes16-key-0001")];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .bytes16_key()
+        .build();
+
+    writer
+        .write_record_with_key(&records[0], &keys[0])
+        .expect("write_record_with_key should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::with_bytes16_key(buf.as_slice()).expect("reader should open");
+    assert!(reader.next_record().expect("next_record should succeed"));
+    let key = reader.record_key().expect("record_key should decode");
+    assert_eq!(key, keys[0]);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CustomKey([u8; 12]);
+
+impl RecordKey for CustomKey {
+    const WIDTH: u16 = 12;
+    const TYPE_TAG: [u8; 16] = *b"dryi:custom:key!";
+
+    fn encode_into(&self, out: &mut [u8]) {
+        debug_assert_eq!(out.len(), usize::from(Self::WIDTH));
+        out.copy_from_slice(&self.0);
+    }
+
+    fn decode_from(bytes: &[u8]) -> Result<Self, dryice::DryIceError> {
+        let arr: [u8; 12] =
+            bytes
+                .try_into()
+                .map_err(|_| dryice::DryIceError::InvalidRecordKeyEncoding {
+                    message: "invalid custom key length",
+                })?;
+        Ok(Self(arr))
+    }
+}
+
+#[test]
+fn keyed_round_trip_with_custom_key() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"####".to_vec()).expect("valid record"),
+    ];
+    let keys = vec![CustomKey(*b"custom-key-1"), CustomKey(*b"custom-key-2")];
+
+    let (read_back, read_keys) = round_trip_zero_copy_keyed(&records, &keys, 100);
+    assert_records_equal(&records, &read_back);
+    assert_eq!(keys, read_keys);
+}
+
+#[test]
 fn seq_record_rejects_mismatched_lengths() {
     let result = SeqRecord::new(
         b"bad".to_vec(),
@@ -297,7 +412,6 @@ fn from_options_rejects_target_bytes() {
         layout: BlockLayoutOptions {
             block_size: BlockSizePolicy::TargetBytes(4096),
         },
-        sort_key: None,
     };
 
     let buf = Vec::new();

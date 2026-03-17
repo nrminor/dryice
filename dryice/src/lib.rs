@@ -69,10 +69,12 @@ pub mod config;
 mod error;
 mod format;
 mod io;
+pub mod key;
 mod record;
 
-pub use codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind};
+pub use codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding};
 pub use config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter};
+pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};
 pub use record::{SeqRecord, SeqRecordExt, SeqRecordLike};

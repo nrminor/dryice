@@ -1,106 +1,242 @@
 //! Writer for the `dryice` format.
 
-use std::io::Write;
+use std::{io::Write, marker::PhantomData};
 
 use crate::{
     block::{BlockBuilder, BlockBuilderConfig},
-    codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind},
+    codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding},
     config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions},
     error::DryIceError,
     format,
+    key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey},
     record::SeqRecordLike,
 };
 
-/// Writes sequencing records into the `dryice` block-oriented format.
-///
-/// The writer accepts any type implementing [`SeqRecordLike`] and
-/// assembles records into blocks internally based on the configured
-/// block size policy and encoding options.
-///
-/// # Construction
-///
-/// Use the builder to configure the writer. All options have sensible
-/// defaults, so the minimal path is:
-///
-/// ```no_run
-/// use dryice::DryIceWriter;
-///
-/// # fn example() -> Result<(), dryice::DryIceError> {
-/// let file = std::fs::File::create("reads.dryice")?;
-/// let mut writer = DryIceWriter::builder()
-///     .inner(file)
-///     .build();
-/// # Ok(())
-/// # }
-/// ```
-///
-/// A more explicit configuration:
-///
-/// ```no_run
-/// use dryice::{DryIceWriter, SequenceEncoding, QualityEncoding};
-///
-/// # fn example() -> Result<(), dryice::DryIceError> {
-/// let file = std::fs::File::create("reads.dryice")?;
-/// let mut writer = DryIceWriter::builder()
-///     .inner(file)
-///     .sequence_encoding(SequenceEncoding::TwoBitExact)
-///     .quality_encoding(QualityEncoding::Binned)
-///     .target_block_records(4096)
-///     .build();
-/// # Ok(())
-/// # }
-/// ```
-pub struct DryIceWriter<W> {
+/// Private marker type used to track a missing writer target in the builder.
+pub struct MissingInner;
+
+/// Builder for [`DryIceWriter`].
+pub struct DryIceWriterBuilder<W = MissingInner, K = NoRecordKey> {
     inner: W,
     sequence_encoding: SequenceEncoding,
     quality_encoding: QualityEncoding,
     name_encoding: NameEncoding,
-    sort_key: Option<SortKeyKind>,
+    target_block_records: usize,
+    _key: PhantomData<K>,
+}
+
+impl DryIceWriterBuilder<MissingInner, NoRecordKey> {
+    fn new() -> Self {
+        Self {
+            inner: MissingInner,
+            sequence_encoding: SequenceEncoding::RawAscii,
+            quality_encoding: QualityEncoding::Raw,
+            name_encoding: NameEncoding::Raw,
+            target_block_records: 8192,
+            _key: PhantomData,
+        }
+    }
+}
+
+impl<W, K> DryIceWriterBuilder<W, K> {
+    /// Set the sequence encoding for new blocks.
+    #[must_use]
+    pub fn sequence_encoding(mut self, encoding: SequenceEncoding) -> Self {
+        self.sequence_encoding = encoding;
+        self
+    }
+
+    /// Set the quality encoding for new blocks.
+    #[must_use]
+    pub fn quality_encoding(mut self, encoding: QualityEncoding) -> Self {
+        self.quality_encoding = encoding;
+        self
+    }
+
+    /// Set the name encoding for new blocks.
+    #[must_use]
+    pub fn name_encoding(mut self, encoding: NameEncoding) -> Self {
+        self.name_encoding = encoding;
+        self
+    }
+
+    /// Set the block size policy in records.
+    #[must_use]
+    pub fn target_block_records(mut self, n: usize) -> Self {
+        self.target_block_records = n;
+        self
+    }
+}
+
+impl<K> DryIceWriterBuilder<MissingInner, K> {
+    /// Set the writer's output target.
+    #[must_use]
+    pub fn inner<W>(self, inner: W) -> DryIceWriterBuilder<W, K> {
+        DryIceWriterBuilder {
+            inner,
+            sequence_encoding: self.sequence_encoding,
+            quality_encoding: self.quality_encoding,
+            name_encoding: self.name_encoding,
+            target_block_records: self.target_block_records,
+            _key: PhantomData,
+        }
+    }
+}
+
+impl<W> DryIceWriterBuilder<W, NoRecordKey> {
+    /// Configure the writer to store a user-defined record-key type.
+    #[must_use]
+    pub fn record_key<K: RecordKey>(self) -> DryIceWriterBuilder<W, K> {
+        DryIceWriterBuilder {
+            inner: self.inner,
+            sequence_encoding: self.sequence_encoding,
+            quality_encoding: self.quality_encoding,
+            name_encoding: self.name_encoding,
+            target_block_records: self.target_block_records,
+            _key: PhantomData,
+        }
+    }
+
+    /// Configure the writer to store the built-in 8-byte key type.
+    #[must_use]
+    pub fn bytes8_key(self) -> DryIceWriterBuilder<W, Bytes8Key> {
+        self.record_key::<Bytes8Key>()
+    }
+
+    /// Configure the writer to store the built-in 16-byte key type.
+    #[must_use]
+    pub fn bytes16_key(self) -> DryIceWriterBuilder<W, Bytes16Key> {
+        self.record_key::<Bytes16Key>()
+    }
+}
+
+impl<W: Write> DryIceWriterBuilder<W, NoRecordKey> {
+    /// Build an unkeyed writer.
+    #[must_use]
+    pub fn build(self) -> DryIceWriter<W, NoRecordKey> {
+        DryIceWriter::new_unkeyed(
+            self.inner,
+            self.sequence_encoding,
+            self.quality_encoding,
+            self.name_encoding,
+            self.target_block_records,
+        )
+    }
+}
+
+impl<W: Write, K: RecordKey> DryIceWriterBuilder<W, K> {
+    /// Build a keyed writer.
+    #[must_use]
+    pub fn build(self) -> DryIceWriter<W, K> {
+        DryIceWriter::new_keyed(
+            self.inner,
+            self.sequence_encoding,
+            self.quality_encoding,
+            self.name_encoding,
+            self.target_block_records,
+        )
+    }
+}
+
+/// Writes sequencing records into the `dryice` block-oriented format.
+pub struct DryIceWriter<W, K = NoRecordKey> {
+    inner: W,
+    sequence_encoding: SequenceEncoding,
+    quality_encoding: QualityEncoding,
+    name_encoding: NameEncoding,
     target_block_records: usize,
     block_builder: BlockBuilder,
     header_written: bool,
+    _key: PhantomData<K>,
 }
 
-#[bon::bon]
-impl<W> DryIceWriter<W> {
+impl DryIceWriter<MissingInner, NoRecordKey> {
     /// Start building a new writer.
-    #[builder]
-    pub fn new(
+    #[must_use]
+    pub fn builder() -> DryIceWriterBuilder<MissingInner, NoRecordKey> {
+        DryIceWriterBuilder::new()
+    }
+}
+
+impl<W> DryIceWriter<W, NoRecordKey> {
+    fn new_unkeyed(
         inner: W,
-        #[builder(default = SequenceEncoding::RawAscii)] sequence_encoding: SequenceEncoding,
-        #[builder(default = QualityEncoding::Raw)] quality_encoding: QualityEncoding,
-        #[builder(default = NameEncoding::Raw)] name_encoding: NameEncoding,
-        sort_key: Option<SortKeyKind>,
-        #[builder(default = 8192)] target_block_records: usize,
+        sequence_encoding: SequenceEncoding,
+        quality_encoding: QualityEncoding,
+        name_encoding: NameEncoding,
+        target_block_records: usize,
     ) -> Self {
+        let block_builder = BlockBuilder::new(&BlockBuilderConfig {
+            sequence_encoding,
+            quality_encoding,
+            name_encoding,
+            record_key_width: None,
+            record_key_tag: None,
+            target_records: target_block_records,
+        });
+
         Self {
             inner,
             sequence_encoding,
             quality_encoding,
             name_encoding,
-            sort_key,
             target_block_records,
-            block_builder: BlockBuilder::new(&BlockBuilderConfig {
-                sequence_encoding,
-                quality_encoding,
-                name_encoding,
-                sort_key_kind: sort_key,
-                target_records: target_block_records,
-            }),
+            block_builder,
             header_written: false,
+            _key: PhantomData,
         }
     }
 }
 
-impl<W: Write> DryIceWriter<W> {
-    /// Create a writer from a pre-built options struct.
-    ///
-    /// Most users should prefer the builder API instead.
+impl<W, K: RecordKey> DryIceWriter<W, K> {
+    fn new_keyed(
+        inner: W,
+        sequence_encoding: SequenceEncoding,
+        quality_encoding: QualityEncoding,
+        name_encoding: NameEncoding,
+        target_block_records: usize,
+    ) -> Self {
+        let block_builder = BlockBuilder::new(&BlockBuilderConfig {
+            sequence_encoding,
+            quality_encoding,
+            name_encoding,
+            record_key_width: Some(K::WIDTH),
+            record_key_tag: Some(K::TYPE_TAG),
+            target_records: target_block_records,
+        });
+
+        Self {
+            inner,
+            sequence_encoding,
+            quality_encoding,
+            name_encoding,
+            target_block_records,
+            block_builder,
+            header_written: false,
+            _key: PhantomData,
+        }
+    }
+}
+
+impl<W, K> DryIceWriter<W, K> {
+    fn ensure_header_written(&mut self) -> Result<(), DryIceError>
+    where
+        W: Write,
+    {
+        if !self.header_written {
+            format::write_file_header(&mut self.inner)?;
+            self.header_written = true;
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> DryIceWriter<W, NoRecordKey> {
+    /// Create an unkeyed writer from a pre-built options struct.
     ///
     /// # Errors
     ///
-    /// Returns an error if the configuration is invalid or if the
-    /// file header cannot be written.
+    /// Returns an error if the options request an unsupported block-size policy.
     pub fn from_options(inner: W, options: &DryIceWriterOptions) -> Result<Self, DryIceError> {
         let target_block_records = match options.layout.block_size {
             BlockSizePolicy::TargetRecords(n) => n,
@@ -111,17 +247,16 @@ impl<W: Write> DryIceWriter<W> {
             },
         };
 
-        Ok(Self::builder()
+        Ok(DryIceWriter::<MissingInner, NoRecordKey>::builder()
             .inner(inner)
             .sequence_encoding(options.encoding.sequence)
             .quality_encoding(options.encoding.quality)
             .name_encoding(options.encoding.names)
-            .maybe_sort_key(options.sort_key)
             .target_block_records(target_block_records)
             .build())
     }
 
-    /// Assemble the current configuration into a [`DryIceWriterOptions`].
+    /// Assemble the current configuration into an unkeyed options struct.
     #[must_use]
     pub fn options(&self) -> DryIceWriterOptions {
         DryIceWriterOptions {
@@ -133,28 +268,15 @@ impl<W: Write> DryIceWriter<W> {
             layout: BlockLayoutOptions {
                 block_size: BlockSizePolicy::TargetRecords(self.target_block_records),
             },
-            sort_key: self.sort_key,
         }
     }
 
-    fn ensure_header_written(&mut self) -> Result<(), DryIceError> {
-        if !self.header_written {
-            format::write_file_header(&mut self.inner)?;
-            self.header_written = true;
-        }
-        Ok(())
-    }
-
-    /// Write a single sequencing record.
-    ///
-    /// The record is appended to the current block. When the block
-    /// reaches the configured size threshold, it is automatically
-    /// flushed to the underlying writer.
+    /// Write a single sequencing record to an unkeyed writer.
     ///
     /// # Errors
     ///
-    /// Returns an error if the record fails validation or if an I/O
-    /// error occurs during a block flush.
+    /// Returns an error if the record fails validation, if the file header cannot
+    /// be written, or if flushing the current block fails.
     pub fn write_record<R: SeqRecordLike>(&mut self, record: &R) -> Result<(), DryIceError> {
         self.ensure_header_written()?;
         self.block_builder.push_record(record)?;
@@ -165,15 +287,38 @@ impl<W: Write> DryIceWriter<W> {
 
         Ok(())
     }
+}
 
-    /// Flush any remaining buffered records and finalize the file.
-    ///
-    /// This must be called to ensure all data is written. Returns the
-    /// underlying writer on success.
+impl<W: Write, K: RecordKey> DryIceWriter<W, K> {
+    /// Write a single sequencing record together with its accelerator key.
     ///
     /// # Errors
     ///
-    /// Returns an error if the final block flush or file finalization
+    /// Returns an error if the record fails validation, if the key cannot be
+    /// encoded, if the file header cannot be written, or if flushing the current
+    /// block fails.
+    pub fn write_record_with_key<R: SeqRecordLike>(
+        &mut self,
+        record: &R,
+        key: &K,
+    ) -> Result<(), DryIceError> {
+        self.ensure_header_written()?;
+        self.block_builder.push_record_with_key(record, key)?;
+
+        if self.block_builder.should_flush() {
+            self.flush_block()?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<W: Write, K> DryIceWriter<W, K> {
+    /// Flush any remaining buffered records and finalize the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing the file header or flushing the final block
     /// fails.
     pub fn finish(mut self) -> Result<W, DryIceError> {
         self.ensure_header_written()?;

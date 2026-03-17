@@ -50,14 +50,15 @@ The following phases are complete.
 - `SeqRecordExt` blanket extension trait providing `to_seq_record()`
 - `SeqRecord` owned row-wise record type with private fields, invariant-preserving constructors, and accessors
 - `DryIceError` with categorized error variants
-- public encoding/config enums: `SequenceEncoding`, `QualityEncoding`, `NameEncoding`, `BlockSizePolicy`, `SortKeyKind`
+- public encoding/config enums: `SequenceEncoding`, `QualityEncoding`, `NameEncoding`, `BlockSizePolicy`
 
 ### Phase 3: config/builder layer (done)
 
 - `DryIceWriterOptions` with grouped sub-structs `EncodingOptions` and `BlockLayoutOptions`
-- `bon`-derived flat builder on `DryIceWriter` using function-level `#[bon::builder]`
+- hand-written typestate builder on `DryIceWriter` with `#[bon::bon]` on the constructor impl block
 - `Default` impls on codec enums for clean config defaults
 - `from_options()` escape hatch that rejects unsupported `TargetBytes` policy
+- builder supports typestate transitions for keyed/unkeyed writers via `.record_key::<K>()`
 
 ### Phase 4: block schema and internal machinery (done)
 
@@ -70,13 +71,38 @@ The following phases are complete.
 ### Phase 5: first end-to-end raw round-trip (done)
 
 - file header: 8 bytes (`DRYI` magic + major/minor version as little-endian u16)
-- block header: 88 bytes (record count, encoding tags, 5 section ranges)
+- block header: 106 bytes (record count, encoding tags, record-key metadata, 5 section ranges)
 - all integer fields little-endian throughout the format
 - writer emits real file header and serializes blocks with index entries and raw payload sections
 - reader parses file header, loads blocks, and exposes the current record via `SeqRecordLike`
 - zero-copy primary read path via `next_record()` — no per-record heap allocation
 - convenience `into_records()` iterator for users who prefer `for`-loop syntax
 - zero-copy reader-to-writer piping: `writer.write_record(&reader)` works because `DryIceReader` implements `SeqRecordLike`
+
+### Phase 6: code quality pass (done)
+
+- factored repeated `u32::try_from` patterns into a `to_u32` helper
+- replaced `String` payloads in error variants with `&'static str` throughout
+- reduced `BlockBuilder::new` to take `&BlockBuilderConfig` instead of 5 positional arguments
+- added `SectionOverflow` error variant
+- cleaned up `as` casts with explicit `try_from` where appropriate
+
+### Phase 7: generic record-key API (done)
+
+This replaced the earlier `SortKeyKind` enum approach with a fully generic trait-based system.
+
+- `RecordKey` trait with `const WIDTH: u16`, `const TYPE_TAG: [u8; 16]`, `encode_into()`, `decode_from()`
+- `NoRecordKey` default marker for unkeyed operation
+- built-in key types: `Bytes8Key` (8 bytes) and `Bytes16Key` (16 bytes)
+- `DryIceWriter<W, K>` and `DryIceReader<R, K>` with default `K = NoRecordKey`
+- typestate builder transitions: `.record_key::<K>()`, `.bytes8_key()`, `.bytes16_key()`
+- keyed write path: `write_record_with_key(&record, &key)`
+- keyed read path: `reader.record_key()` returns typed `K`
+- reader constructors: `with_record_key::<K>(inner)`, `with_bytes8_key(inner)`, `with_bytes16_key(inner)`
+- block header now stores `record_key_width`, `record_key_tag`, and `record_keys` range
+- block builder and decoder support keyed sections with type verification
+- new error variants: `RecordKeyTypeMismatch`, `MissingRecordKeySection`, `InvalidRecordKeyEncoding`
+- round-trip tests for built-in keys, custom user-defined keys, and convenience helper paths
 
 ### CI (done)
 
@@ -91,7 +117,9 @@ These are no longer just planning-stage conclusions. They are implemented and te
 - `SeqRecordLike` is the universal record interface, used on both write and read sides
 - `SeqRecord` is the owned row-wise output type, used only when ownership is actually needed
 - `DryIceReader` itself implements `SeqRecordLike` for the current record — this is the zero-copy path
-- one trait, one owned type, no separate borrowed record struct
+- `RecordKey` trait allows user-defined fixed-width accelerator keys with typed encode/decode
+- `DryIceWriter<W, K>` and `DryIceReader<R, K>` are generic over an optional key type, defaulting to `NoRecordKey`
+- one record trait, one owned record type, one key trait, no separate borrowed record struct
 
 ### Reader access patterns
 
@@ -112,7 +140,7 @@ for record in reader.into_records() {
 
 ### Writer builder
 
-The writer uses `bon`'s function-level builder to ensure the `BlockBuilder` is constructed with the user's actual encoding choices:
+The writer uses a hand-written typestate builder that supports both unkeyed and keyed construction:
 
 ```rust
 let writer = DryIceWriter::builder()
@@ -120,6 +148,11 @@ let writer = DryIceWriter::builder()
     .sequence_encoding(SequenceEncoding::TwoBitExact)
     .quality_encoding(QualityEncoding::Binned)
     .target_block_records(4096)
+    .build();
+
+let keyed_writer = DryIceWriter::builder()
+    .inner(file)
+    .record_key::<MyKey>()
     .build();
 ```
 
@@ -131,17 +164,19 @@ file header (8 bytes)
 [2 bytes] version_major: u16 le
 [2 bytes] version_minor: u16 le
 
-block header (88 bytes)
+block header (106 bytes)
 [4 bytes]  record_count        u32 le
 [1 byte]   sequence_encoding   u8
 [1 byte]   quality_encoding    u8
 [1 byte]   name_encoding       u8
-[1 byte]   sort_key_kind       u8
+[1 byte]   has_record_key      u8
+[2 bytes]  record_key_width    u16 le
+[16 bytes] record_key_tag      [u8; 16]
 [16 bytes] index range         offset u64 le + len u64 le
 [16 bytes] names range         offset u64 le + len u64 le
 [16 bytes] sequences range     offset u64 le + len u64 le
 [16 bytes] qualities range     offset u64 le + len u64 le
-[16 bytes] sort_keys range     offset u64 le + len u64 le
+[16 bytes] record_keys range   offset u64 le + len u64 le
 
 record index entry (24 bytes)
 [4 bytes] name_offset     u32 le
@@ -162,6 +197,7 @@ The test suite includes:
 - error-path tests for mismatched lengths, bad magic, truncated headers, and unsupported config
 - property-based fuzz testing with proptest for arbitrary record round-trip fidelity
 - zero-copy reader-to-writer piping test
+- keyed round-trip tests for built-in 8-byte and 16-byte keys, custom user-defined keys, and convenience helper paths
 
 ## What still remains open
 
@@ -169,26 +205,12 @@ These questions are still active, but they are now localized rather than pervasi
 
 - exact `TwoBitExact` sequence encoding implementation
 - exact `Binned` quality encoding implementation
-- exact sort-key accelerator implementation and API
-- whether `CorruptBlockLayout { message: String }` error variants should use `&'static str` instead
-- whether repeated `u32::try_from` patterns in the builder should be factored into helpers
-- whether the `BlockBuilder::new` 5-argument constructor should take a config struct instead
 - exact `SeqRecord` convenience surface beyond the current constructor/accessor API
 - reader-options surface, if any beyond `DryIceReader::new(...)`
 
 ## Next implementation priorities
 
-### Phase 6: code quality pass
-
-Before adding new features, address the issues identified during review:
-
-- factor repeated `u32::try_from(...).map_err(...)` patterns into a helper
-- consider replacing `String` payloads in error variants with `&'static str` where the messages are compile-time-known
-- consider reducing `BlockBuilder::new` argument count
-- remove any remaining `#[allow(dead_code)]` annotations that are no longer justified
-- verify all `as usize` / `as u64` casts are safe or replace with `try_from`
-
-### Phase 7: `TwoBitExact` sequence encoding
+### Phase 8: `TwoBitExact` sequence encoding
 
 This is the first non-trivial codec and the most important compact encoding for the format.
 
@@ -209,15 +231,9 @@ This will require:
 - round-trip tests with sequences containing IUPAC ambiguity codes
 - property-based tests for encoding fidelity
 
-### Phase 8: `Binned` quality encoding
+### Phase 9: `Binned` quality encoding
 
 The most promising early lossy transform. Should be cheap enough that it does not undermine throughput.
-
-### Phase 9: concrete sort-key accelerator support
-
-- implement `SortKeyKind::U64Minimizer` and `U128Minimizer` storage
-- wire through writer config, block builder, and block decoder
-- add sort-key round-trip tests
 
 ### Phase 10: benchmarking
 
@@ -233,7 +249,6 @@ Before claiming "high-throughput," we need measurements.
 
 The following would be premature right now:
 
-- designing a public plugin system for accelerators
 - coupling the core crate to `noodles` or any other parser ecosystem
 - designing the Python/Node wrappers before the core encodings are stable
 - introducing a macros crate without a concrete need
@@ -251,10 +266,10 @@ Roughly:
 - core Rust abstraction model: implemented and tested
 - binary format: defined and serializing
 - raw-mode round-trip: working
+- generic record-key API: implemented and tested
 - compact encodings: not yet implemented
-- accelerator support: not yet implemented
 - benchmarking: not yet started
 
 ## Immediate next step
 
-The best next move is the code quality pass (phase 6), followed by `TwoBitExact` encoding (phase 7). The code quality pass is small but will make the codebase cleaner before we add encoding complexity.
+The best next move is `TwoBitExact` sequence encoding (phase 8). The code quality pass and generic record-key API are complete. The next real feature work is compact encodings.

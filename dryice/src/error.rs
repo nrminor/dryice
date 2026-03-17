@@ -134,6 +134,21 @@ pub enum DryIceError {
         message: &'static str,
     },
 
+    /// Record-key metadata in the block does not match the configured key type.
+    #[error("record-key metadata does not match the configured key type")]
+    RecordKeyTypeMismatch,
+
+    /// A record-key section is required but missing.
+    #[error("record-key section is missing from this block")]
+    MissingRecordKeySection,
+
+    /// A record-key encoding or decoding operation failed.
+    #[error("invalid record-key encoding: {message}")]
+    InvalidRecordKeyEncoding {
+        /// Description of the problem.
+        message: &'static str,
+    },
+
     /// A value exceeds the maximum representable size for the format.
     #[error("{field} exceeds u32 range")]
     SectionOverflow {
