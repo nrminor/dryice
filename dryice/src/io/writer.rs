@@ -2,13 +2,14 @@
 
 use std::io::Write;
 
-use bon::Builder;
-
-use crate::block::BlockBuilder;
-use crate::codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind};
-use crate::config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions};
-use crate::error::DryIceError;
-use crate::record::SeqRecordLike;
+use crate::{
+    block::BlockBuilder,
+    codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind},
+    config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions},
+    error::DryIceError,
+    format,
+    record::SeqRecordLike,
+};
 
 /// Writes sequencing records into the `dryice` block-oriented format.
 ///
@@ -28,7 +29,7 @@ use crate::record::SeqRecordLike;
 /// let file = std::fs::File::create("reads.dryice")?;
 /// let mut writer = DryIceWriter::builder()
 ///     .inner(file)
-///     .build()?;
+///     .build();
 /// # Ok(())
 /// # }
 /// ```
@@ -45,37 +46,50 @@ use crate::record::SeqRecordLike;
 ///     .sequence_encoding(SequenceEncoding::TwoBitExact)
 ///     .quality_encoding(QualityEncoding::Binned)
 ///     .target_block_records(4096)
-///     .build()?;
+///     .build();
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Builder)]
-#[builder(on(String, into), on(Vec<u8>, into))]
 pub struct DryIceWriter<W> {
     inner: W,
-
-    #[builder(default = SequenceEncoding::RawAscii)]
     sequence_encoding: SequenceEncoding,
-
-    #[builder(default = QualityEncoding::Raw)]
     quality_encoding: QualityEncoding,
-
-    #[builder(default = NameEncoding::Raw)]
     name_encoding: NameEncoding,
-
     sort_key: Option<SortKeyKind>,
-
-    #[builder(default = 8192)]
     target_block_records: usize,
-
-    #[builder(skip = BlockBuilder::new(
-        SequenceEncoding::RawAscii,
-        QualityEncoding::Raw,
-        NameEncoding::Raw,
-        None,
-        8192,
-    ))]
     block_builder: BlockBuilder,
+    header_written: bool,
+}
+
+#[bon::bon]
+impl<W> DryIceWriter<W> {
+    /// Start building a new writer.
+    #[builder]
+    pub fn new(
+        inner: W,
+        #[builder(default = SequenceEncoding::RawAscii)] sequence_encoding: SequenceEncoding,
+        #[builder(default = QualityEncoding::Raw)] quality_encoding: QualityEncoding,
+        #[builder(default = NameEncoding::Raw)] name_encoding: NameEncoding,
+        sort_key: Option<SortKeyKind>,
+        #[builder(default = 8192)] target_block_records: usize,
+    ) -> Self {
+        Self {
+            inner,
+            sequence_encoding,
+            quality_encoding,
+            name_encoding,
+            sort_key,
+            target_block_records,
+            block_builder: BlockBuilder::new(
+                sequence_encoding,
+                quality_encoding,
+                name_encoding,
+                sort_key,
+                target_block_records,
+            ),
+            header_written: false,
+        }
+    }
 }
 
 impl<W: Write> DryIceWriter<W> {
@@ -90,26 +104,21 @@ impl<W: Write> DryIceWriter<W> {
     pub fn from_options(inner: W, options: &DryIceWriterOptions) -> Result<Self, DryIceError> {
         let target_block_records = match options.layout.block_size {
             BlockSizePolicy::TargetRecords(n) => n,
-            BlockSizePolicy::TargetBytes(_) => 8192,
+            BlockSizePolicy::TargetBytes(_) => {
+                return Err(DryIceError::InvalidWriterConfiguration(
+                    "TargetBytes block size policy is not yet supported",
+                ));
+            },
         };
 
-        let block_builder = BlockBuilder::new(
-            options.encoding.sequence,
-            options.encoding.quality,
-            options.encoding.names,
-            options.sort_key,
-            target_block_records,
-        );
-
-        Ok(Self {
-            inner,
-            sequence_encoding: options.encoding.sequence,
-            quality_encoding: options.encoding.quality,
-            name_encoding: options.encoding.names,
-            sort_key: options.sort_key,
-            target_block_records,
-            block_builder,
-        })
+        Ok(Self::builder()
+            .inner(inner)
+            .sequence_encoding(options.encoding.sequence)
+            .quality_encoding(options.encoding.quality)
+            .name_encoding(options.encoding.names)
+            .maybe_sort_key(options.sort_key)
+            .target_block_records(target_block_records)
+            .build())
     }
 
     /// Assemble the current configuration into a [`DryIceWriterOptions`].
@@ -128,6 +137,14 @@ impl<W: Write> DryIceWriter<W> {
         }
     }
 
+    fn ensure_header_written(&mut self) -> Result<(), DryIceError> {
+        if !self.header_written {
+            format::write_file_header(&mut self.inner)?;
+            self.header_written = true;
+        }
+        Ok(())
+    }
+
     /// Write a single sequencing record.
     ///
     /// The record is appended to the current block. When the block
@@ -139,6 +156,7 @@ impl<W: Write> DryIceWriter<W> {
     /// Returns an error if the record fails validation or if an I/O
     /// error occurs during a block flush.
     pub fn write_record<R: SeqRecordLike>(&mut self, record: &R) -> Result<(), DryIceError> {
+        self.ensure_header_written()?;
         self.block_builder.push_record(record)?;
 
         if self.block_builder.should_flush() {
@@ -158,6 +176,8 @@ impl<W: Write> DryIceWriter<W> {
     /// Returns an error if the final block flush or file finalization
     /// fails.
     pub fn finish(mut self) -> Result<W, DryIceError> {
+        self.ensure_header_written()?;
+
         if !self.block_builder.is_empty() {
             self.flush_block()?;
         }
@@ -166,15 +186,7 @@ impl<W: Write> DryIceWriter<W> {
     }
 
     fn flush_block(&mut self) -> Result<(), DryIceError> {
-        let encoded = self.block_builder.finish_block()?;
-        self.inner.write_all(&encoded)?;
-        self.block_builder = BlockBuilder::new(
-            self.sequence_encoding,
-            self.quality_encoding,
-            self.name_encoding,
-            self.sort_key,
-            self.target_block_records,
-        );
+        self.block_builder.write_block(&mut self.inner)?;
         Ok(())
     }
 }

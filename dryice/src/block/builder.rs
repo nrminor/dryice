@@ -1,17 +1,23 @@
 //! Block assembly from incoming records.
 
-use crate::codec::{NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind};
-use crate::error::DryIceError;
-use crate::record::SeqRecordLike;
+use crate::{
+    block::header::{BlockHeader, ByteRange},
+    codec::{NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind},
+    error::DryIceError,
+    format,
+    record::SeqRecordLike,
+};
 
 use super::index::RecordIndexEntry;
+
+/// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
+const INDEX_ENTRY_SIZE: u64 = 24;
 
 /// Accumulates records into a single block's worth of data.
 ///
 /// The builder owns the block-local buffers for each payload stream
 /// and the record index. When the block reaches its configured size
 /// threshold, the caller should finalize it and start a new builder.
-#[allow(dead_code)]
 pub(crate) struct BlockBuilder {
     /// Per-record index entries accumulated so far.
     index: Vec<RecordIndexEntry>,
@@ -26,6 +32,7 @@ pub(crate) struct BlockBuilder {
     quality_bytes: Vec<u8>,
 
     /// Concatenated sort-key bytes, if an accelerator is configured.
+    #[allow(dead_code)]
     sort_key_bytes: Option<Vec<u8>>,
 
     /// The sequence encoding for this block.
@@ -144,14 +151,92 @@ impl BlockBuilder {
         self.index.len()
     }
 
-    /// Finalize the block and return the encoded bytes.
+    /// Finalize the block, writing the block header and payload to the
+    /// given writer. Resets internal state for reuse.
     ///
     /// # Errors
     ///
-    /// Returns an error if encoding or serialization fails.
-    pub fn finish_block(&mut self) -> Result<Vec<u8>, DryIceError> {
-        // TODO: serialize block header, index, and payload sections
-        // into a contiguous byte buffer. Reset internal state for reuse.
-        todo!()
+    /// Returns an error if serialization or writing fails.
+    pub fn write_block<W: std::io::Write>(&mut self, writer: &mut W) -> Result<(), DryIceError> {
+        let record_count =
+            u32::try_from(self.index.len()).map_err(|_| DryIceError::CorruptBlockLayout {
+                message: "record count exceeds u32 range".to_string(),
+            })?;
+
+        let index_len = self.index.len() as u64 * INDEX_ENTRY_SIZE;
+        let name_len = self.name_bytes.len() as u64;
+        let seq_len = self.sequence_bytes.len() as u64;
+        let qual_len = self.quality_bytes.len() as u64;
+
+        // Compute section offsets (relative to start of payload area,
+        // which begins immediately after the block header).
+        let index_offset: u64 = 0;
+        let names_offset = index_offset + index_len;
+        let sequences_offset = names_offset + name_len;
+        let qualities_offset = sequences_offset + seq_len;
+
+        let has_names = self.name_encoding != NameEncoding::Omitted;
+        let has_qualities = self.quality_encoding != QualityEncoding::Omitted;
+
+        let header = BlockHeader {
+            record_count,
+            sequence_encoding: self.sequence_encoding,
+            quality_encoding: self.quality_encoding,
+            name_encoding: self.name_encoding,
+            sort_key_kind: self.sort_key_kind,
+            index: ByteRange {
+                offset: index_offset,
+                len: index_len,
+            },
+            names: if has_names {
+                Some(ByteRange {
+                    offset: names_offset,
+                    len: name_len,
+                })
+            } else {
+                None
+            },
+            sequences: ByteRange {
+                offset: sequences_offset,
+                len: seq_len,
+            },
+            qualities: if has_qualities {
+                Some(ByteRange {
+                    offset: qualities_offset,
+                    len: qual_len,
+                })
+            } else {
+                None
+            },
+            sort_keys: None, // TODO: accelerator support
+        };
+
+        // Write block header.
+        format::write_block_header(writer, &header)?;
+
+        // Write index entries.
+        for entry in &self.index {
+            let mut buf = [0u8; 24];
+            buf[0..4].copy_from_slice(&entry.name_offset.to_le_bytes());
+            buf[4..8].copy_from_slice(&entry.name_len.to_le_bytes());
+            buf[8..12].copy_from_slice(&entry.sequence_offset.to_le_bytes());
+            buf[12..16].copy_from_slice(&entry.sequence_len.to_le_bytes());
+            buf[16..20].copy_from_slice(&entry.quality_offset.to_le_bytes());
+            buf[20..24].copy_from_slice(&entry.quality_len.to_le_bytes());
+            writer.write_all(&buf)?;
+        }
+
+        // Write payload sections.
+        writer.write_all(&self.name_bytes)?;
+        writer.write_all(&self.sequence_bytes)?;
+        writer.write_all(&self.quality_bytes)?;
+
+        // Reset for next block.
+        self.index.clear();
+        self.name_bytes.clear();
+        self.sequence_bytes.clear();
+        self.quality_bytes.clear();
+
+        Ok(())
     }
 }

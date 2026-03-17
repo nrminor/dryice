@@ -4,15 +4,13 @@
 //! deserialization logic for the file header and block header.
 //! All integer fields in the format are little-endian.
 
-// These functions and constants are not yet called from the writer/reader
-// but are exercised by tests and will be wired in during the next phase.
-#![allow(dead_code)]
-
 use std::io::{Read, Write};
 
-use crate::block::header::{BlockHeader, ByteRange};
-use crate::codec::{NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind};
-use crate::error::DryIceError;
+use crate::{
+    block::header::{BlockHeader, ByteRange},
+    codec::{NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind},
+    error::DryIceError,
+};
 
 /// Magic bytes at the start of every `dryice` file.
 const MAGIC: [u8; 4] = *b"DRYI";
@@ -43,8 +41,6 @@ const FILE_HEADER_SIZE: usize = 8;
 /// ```
 const BLOCK_HEADER_SIZE: usize = 88;
 
-// === Encoding tag constants ===
-
 const SEQ_TAG_RAW_ASCII: u8 = 0;
 const SEQ_TAG_TWO_BIT_EXACT: u8 = 1;
 const SEQ_TAG_TWO_BIT_LOSSY_N: u8 = 2;
@@ -59,8 +55,6 @@ const NAME_TAG_OMITTED: u8 = 1;
 const SORT_KEY_TAG_NONE: u8 = 0;
 const SORT_KEY_TAG_U64_MINIMIZER: u8 = 1;
 const SORT_KEY_TAG_U128_MINIMIZER: u8 = 2;
-
-// === File header ===
 
 /// Write the file header to the given writer.
 ///
@@ -101,8 +95,6 @@ pub(crate) fn read_file_header<R: Read>(reader: &mut R) -> Result<(u16, u16), Dr
 
     Ok((major, minor))
 }
-
-// === Block header ===
 
 fn sequence_encoding_to_tag(enc: SequenceEncoding) -> u8 {
     match enc {

@@ -7,7 +7,7 @@
 //!
 //! The crate is parser-agnostic: any type implementing [`SeqRecordLike`]
 //! can be written into a `dryice` file, and records are read back as
-//! owned [`SeqRecord`] values through an iterator interface.
+//! borrowed slices with no per-record allocation.
 //!
 //! # Writing records
 //!
@@ -21,7 +21,7 @@
 //!     .sequence_encoding(SequenceEncoding::TwoBitExact)
 //!     .quality_encoding(QualityEncoding::Binned)
 //!     .target_block_records(4096)
-//!     .build()?;
+//!     .build();
 //!
 //! // writer.write_record(&my_record)?;
 //! // writer.finish()?;
@@ -29,7 +29,24 @@
 //! # }
 //! ```
 //!
-//! # Reading records
+//! # Reading records (zero-copy)
+//!
+//! ```no_run
+//! use dryice::{DryIceReader, SeqRecordLike};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let file = std::fs::File::open("reads.dryice")?;
+//! let mut reader = DryIceReader::new(file)?;
+//!
+//! while reader.next_record()? {
+//!     let _seq = reader.sequence();
+//!     // zero-copy access to block-owned buffers
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Reading records (convenience iterator)
 //!
 //! ```no_run
 //! use dryice::DryIceReader;
@@ -38,9 +55,9 @@
 //! let file = std::fs::File::open("reads.dryice")?;
 //! let reader = DryIceReader::new(file)?;
 //!
-//! for record in reader.records() {
+//! for record in reader.into_records() {
 //!     let record = record?;
-//!     // use record.sequence(), record.quality(), etc.
+//!     // owned SeqRecord — allocates per record
 //! }
 //! # Ok(())
 //! # }

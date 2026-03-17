@@ -12,3 +12,6 @@ thiserror = "2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+proptest = "1.10.0"
