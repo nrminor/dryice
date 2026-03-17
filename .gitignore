@@ -34,6 +34,7 @@
 !/dryice/src/block/header.rs
 !/dryice/src/block/index.rs
 !/dryice/src/config.rs
+!/dryice/src/format.rs
 !/dryice/src/io
 !/dryice/src/io.rs
 !/dryice/src/io/reader.rs

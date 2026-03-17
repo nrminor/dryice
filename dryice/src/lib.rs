@@ -50,6 +50,7 @@ mod block;
 pub mod codec;
 pub mod config;
 mod error;
+mod format;
 mod io;
 mod record;
 

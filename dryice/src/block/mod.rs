@@ -10,7 +10,7 @@
 
 mod builder;
 mod decoder;
-mod header;
+pub(crate) mod header;
 mod index;
 
 pub(crate) use builder::BlockBuilder;
