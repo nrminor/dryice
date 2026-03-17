@@ -7,40 +7,101 @@
 //!
 //! The crate is parser-agnostic: any type implementing [`SeqRecordLike`]
 //! can be written into a `dryice` file, and records are read back as
-//! borrowed slices with no per-record allocation.
+//! borrowed slices with no per-record allocation. Sequence, quality, and
+//! name encodings are selected via trait-based codec type parameters,
+//! and users can implement their own codecs.
 //!
-//! # Writing records
+//! # Writing records (default codecs)
 //!
-//! ```no_run
-//! use dryice::DryIceWriter;
+//! ```
+//! use dryice::{DryIceWriter, SeqRecord, SeqRecordLike};
 //!
 //! # fn example() -> Result<(), dryice::DryIceError> {
-//! let file = std::fs::File::create("reads.dryice")?;
+//! let mut buf = Vec::new();
 //! let mut writer = DryIceWriter::builder()
-//!     .inner(file)
+//!     .inner(&mut buf)
+//!     .build();
+//!
+//! let record = SeqRecord::new(
+//!     b"read1".to_vec(),
+//!     b"ACGTACGT".to_vec(),
+//!     b"!!!!!!!!".to_vec(),
+//! )?;
+//! writer.write_record(&record)?;
+//! writer.finish()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Writing with compact codecs
+//!
+//! ```
+//! use dryice::{DryIceWriter, SeqRecord};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(&mut buf)
 //!     .two_bit_exact()
 //!     .binned_quality()
+//!     .split_names()
 //!     .target_block_records(4096)
 //!     .build();
 //!
-//! // writer.write_record(&my_record)?;
-//! // writer.finish()?;
+//! let record = SeqRecord::new(
+//!     b"instrument:run:flowcell 1:N:0:ATCACG".to_vec(),
+//!     b"ACGTACGT".to_vec(),
+//!     b"!!!!!!!!".to_vec(),
+//! )?;
+//! writer.write_record(&record)?;
+//! writer.finish()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Writing with record keys
+//!
+//! ```
+//! use dryice::{Bytes8Key, DryIceWriter, SeqRecord};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(&mut buf)
+//!     .bytes8_key()
+//!     .build();
+//!
+//! let record = SeqRecord::new(
+//!     b"read1".to_vec(),
+//!     b"ACGTACGT".to_vec(),
+//!     b"!!!!!!!!".to_vec(),
+//! )?;
+//! let key = Bytes8Key(*b"sortkey!");
+//! writer.write_record_with_key(&record, &key)?;
+//! writer.finish()?;
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! # Reading records (zero-copy)
 //!
-//! ```no_run
-//! use dryice::{DryIceReader, SeqRecordLike};
+//! ```
+//! use dryice::{DryIceReader, DryIceWriter, SeqRecord, SeqRecordLike};
 //!
 //! # fn example() -> Result<(), dryice::DryIceError> {
-//! let file = std::fs::File::open("reads.dryice")?;
-//! let mut reader = DryIceReader::new(file)?;
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder().inner(&mut buf).build();
+//! let record = SeqRecord::new(
+//!     b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()
+//! )?;
+//! writer.write_record(&record)?;
+//! writer.finish()?;
 //!
+//! let mut reader = DryIceReader::new(buf.as_slice())?;
 //! while reader.next_record()? {
+//!     let _name = reader.name();
 //!     let _seq = reader.sequence();
-//!     // zero-copy access to block-owned buffers
+//!     let _qual = reader.quality();
 //! }
 //! # Ok(())
 //! # }
@@ -48,19 +109,107 @@
 //!
 //! # Reading records (convenience iterator)
 //!
-//! ```no_run
-//! use dryice::DryIceReader;
+//! ```
+//! use dryice::{DryIceReader, DryIceWriter, SeqRecord};
 //!
 //! # fn example() -> Result<(), dryice::DryIceError> {
-//! let file = std::fs::File::open("reads.dryice")?;
-//! let reader = DryIceReader::new(file)?;
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder().inner(&mut buf).build();
+//! let record = SeqRecord::new(
+//!     b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()
+//! )?;
+//! writer.write_record(&record)?;
+//! writer.finish()?;
 //!
+//! let reader = DryIceReader::new(buf.as_slice())?;
 //! for record in reader.into_records() {
 //!     let record = record?;
-//!     // owned SeqRecord — allocates per record
+//!     println!("{}", record);
 //! }
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! # Zero-copy reader-to-writer piping
+//!
+//! ```
+//! use dryice::{DryIceReader, DryIceWriter, SeqRecord, SeqRecordLike};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf1 = Vec::new();
+//! let mut writer1 = DryIceWriter::builder().inner(&mut buf1).build();
+//! let record = SeqRecord::new(
+//!     b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()
+//! )?;
+//! writer1.write_record(&record)?;
+//! writer1.finish()?;
+//!
+//! let mut buf2 = Vec::new();
+//! let mut reader = DryIceReader::new(buf1.as_slice())?;
+//! let mut writer2 = DryIceWriter::builder().inner(&mut buf2).build();
+//! while reader.next_record()? {
+//!     writer2.write_record(&reader)?;
+//! }
+//! writer2.finish()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Reading with non-default codecs
+//!
+//! ```
+//! use dryice::{
+//!     BinnedQualityCodec, DryIceReader, DryIceWriter, SeqRecord,
+//!     SeqRecordLike, SplitNameCodec, TwoBitExactCodec,
+//! };
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(&mut buf)
+//!     .two_bit_exact()
+//!     .binned_quality()
+//!     .split_names()
+//!     .build();
+//! let record = SeqRecord::new(
+//!     b"instrument:run 1:N:0".to_vec(),
+//!     b"ACGT".to_vec(),
+//!     b"!!!!".to_vec(),
+//! )?;
+//! writer.write_record(&record)?;
+//! writer.finish()?;
+//!
+//! let mut reader = DryIceReader::with_codecs::<
+//!     TwoBitExactCodec,
+//!     BinnedQualityCodec,
+//!     SplitNameCodec,
+//! >(buf.as_slice())?;
+//! while reader.next_record()? {
+//!     let _seq = reader.sequence();
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Custom codec implementation
+//!
+//! ```
+//! use dryice::{DryIceError, SequenceCodec};
+//!
+//! struct UppercaseCodec;
+//!
+//! impl SequenceCodec for UppercaseCodec {
+//!     const TYPE_TAG: [u8; 16] = *b"demo:seq:upper!!";
+//!     const LOSSY: bool = true;
+//!
+//!     fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
+//!         Ok(sequence.iter().map(u8::to_ascii_uppercase).collect())
+//!     }
+//!
+//!     fn decode(encoded: &[u8], _original_len: usize) -> Result<Vec<u8>, DryIceError> {
+//!         Ok(encoded.to_vec())
+//!     }
+//! }
 //! ```
 
 mod block;
