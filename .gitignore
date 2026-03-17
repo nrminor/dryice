@@ -24,6 +24,12 @@
 !/dryice/Cargo.toml
 !/dryice/src
 !/dryice/src/lib.rs
+!/dryice/src/error.rs
+!/dryice/src/record.rs
+!/dryice/src/codec.rs
+!/dryice/src/io.rs
+!/dryice/src/io/reader.rs
+!/dryice/src/io/writer.rs
 
 # === Allowed: GitHub workflows ===
 !/.github
