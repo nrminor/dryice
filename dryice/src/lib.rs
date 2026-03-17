@@ -46,6 +46,7 @@
 //! # }
 //! ```
 
+mod block;
 pub mod codec;
 pub mod config;
 mod error;

@@ -27,7 +27,14 @@
 !/dryice/src/error.rs
 !/dryice/src/record.rs
 !/dryice/src/codec.rs
+!/dryice/src/block
+!/dryice/src/block/mod.rs
+!/dryice/src/block/builder.rs
+!/dryice/src/block/decoder.rs
+!/dryice/src/block/header.rs
+!/dryice/src/block/index.rs
 !/dryice/src/config.rs
+!/dryice/src/io
 !/dryice/src/io.rs
 !/dryice/src/io/reader.rs
 !/dryice/src/io/writer.rs
