@@ -42,14 +42,14 @@ pub enum DryIceError {
     #[error("invalid sequence encoding input: {message}")]
     InvalidSequenceInput {
         /// Description of the problem.
-        message: String,
+        message: &'static str,
     },
 
     /// Quality data is not valid for the selected encoding.
     #[error("invalid quality encoding input: {message}")]
     InvalidQualityInput {
         /// Description of the problem.
-        message: String,
+        message: &'static str,
     },
 
     /// The file uses a format version this build does not support.
@@ -67,14 +67,14 @@ pub enum DryIceError {
     #[error("corrupt block header: {message}")]
     CorruptBlockHeader {
         /// Description of the corruption.
-        message: String,
+        message: &'static str,
     },
 
     /// Block layout metadata is inconsistent or unreadable.
     #[error("corrupt block layout: {message}")]
     CorruptBlockLayout {
         /// Description of the corruption.
-        message: String,
+        message: &'static str,
     },
 
     /// A record index entry is corrupt or out of range.
@@ -83,7 +83,7 @@ pub enum DryIceError {
         /// Zero-based index of the problematic entry.
         entry: usize,
         /// Description of the corruption.
-        message: String,
+        message: &'static str,
     },
 
     /// A section that should be present in this block is missing.
@@ -131,6 +131,13 @@ pub enum DryIceError {
         /// Zero-based index of the record within the block.
         record_index: usize,
         /// Description of the decode failure.
-        message: String,
+        message: &'static str,
+    },
+
+    /// A value exceeds the maximum representable size for the format.
+    #[error("{field} exceeds u32 range")]
+    SectionOverflow {
+        /// Which field or section overflowed.
+        field: &'static str,
     },
 }

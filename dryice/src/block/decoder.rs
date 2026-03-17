@@ -1,11 +1,11 @@
 //! Block decoding and record extraction.
 
 use crate::{
+    block::header::{BlockHeader, ByteRange},
     codec::{NameEncoding, QualityEncoding},
     error::DryIceError,
 };
 
-use super::header::BlockHeader;
 use super::index::RecordIndexEntry;
 
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
@@ -40,10 +40,10 @@ pub(crate) struct BlockDecoder {
     started: bool,
 }
 
-fn section_len(range: Option<crate::block::header::ByteRange>) -> Result<usize, DryIceError> {
+fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
     let len = range.map_or(0, |r| r.len);
     usize::try_from(len).map_err(|_| DryIceError::CorruptBlockLayout {
-        message: "section length exceeds usize range".to_string(),
+        message: "section length exceeds usize range",
     })
 }
 
@@ -61,7 +61,6 @@ impl BlockDecoder {
     ) -> Result<Self, DryIceError> {
         let record_count = header.record_count as usize;
 
-        // Read index entries.
         let index_byte_len = record_count * INDEX_ENTRY_SIZE;
         let mut index_buf = vec![0u8; index_byte_len];
         reader.read_exact(&mut index_buf)?;
@@ -80,7 +79,6 @@ impl BlockDecoder {
             });
         }
 
-        // Read name section.
         let name_bytes = if header.name_encoding == NameEncoding::Omitted {
             None
         } else {
@@ -90,15 +88,13 @@ impl BlockDecoder {
             Some(buf)
         };
 
-        // Read sequence section.
         let seq_len =
             usize::try_from(header.sequences.len).map_err(|_| DryIceError::CorruptBlockLayout {
-                message: "sequence section length exceeds usize range".to_string(),
+                message: "sequence section length exceeds usize range",
             })?;
         let mut sequence_bytes = vec![0u8; seq_len];
         reader.read_exact(&mut sequence_bytes)?;
 
-        // Read quality section.
         let quality_bytes = if header.quality_encoding == QualityEncoding::Omitted {
             None
         } else {
@@ -107,8 +103,6 @@ impl BlockDecoder {
             reader.read_exact(&mut buf)?;
             Some(buf)
         };
-
-        // TODO: read sort-key section if present.
 
         Ok(Self {
             header,

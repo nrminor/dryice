@@ -13,64 +13,51 @@ use super::index::RecordIndexEntry;
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
 const INDEX_ENTRY_SIZE: u64 = 24;
 
+/// Try to narrow a `usize` into a `u32`, returning a
+/// [`DryIceError::SectionOverflow`] on failure.
+fn to_u32(value: usize, field: &'static str) -> Result<u32, DryIceError> {
+    u32::try_from(value).map_err(|_| DryIceError::SectionOverflow { field })
+}
+
+/// Configuration needed to construct a [`BlockBuilder`].
+pub(crate) struct BlockBuilderConfig {
+    pub sequence_encoding: SequenceEncoding,
+    pub quality_encoding: QualityEncoding,
+    pub name_encoding: NameEncoding,
+    pub sort_key_kind: Option<SortKeyKind>,
+    pub target_records: usize,
+}
+
 /// Accumulates records into a single block's worth of data.
 ///
 /// The builder owns the block-local buffers for each payload stream
 /// and the record index. When the block reaches its configured size
 /// threshold, the caller should finalize it and start a new builder.
 pub(crate) struct BlockBuilder {
-    /// Per-record index entries accumulated so far.
     index: Vec<RecordIndexEntry>,
-
-    /// Concatenated name bytes for all records in this block.
     name_bytes: Vec<u8>,
-
-    /// Concatenated sequence bytes for all records in this block.
     sequence_bytes: Vec<u8>,
-
-    /// Concatenated quality bytes for all records in this block.
     quality_bytes: Vec<u8>,
-
-    /// Concatenated sort-key bytes, if an accelerator is configured.
-    #[allow(dead_code)]
-    sort_key_bytes: Option<Vec<u8>>,
-
-    /// The sequence encoding for this block.
     sequence_encoding: SequenceEncoding,
-
-    /// The quality encoding for this block.
     quality_encoding: QualityEncoding,
-
-    /// The name encoding for this block.
     name_encoding: NameEncoding,
-
-    /// The sort key kind, if configured.
     sort_key_kind: Option<SortKeyKind>,
-
-    /// Maximum number of records before the block should be flushed.
     target_records: usize,
 }
 
 impl BlockBuilder {
-    /// Create a new block builder with the given encoding and sizing options.
-    pub fn new(
-        sequence_encoding: SequenceEncoding,
-        quality_encoding: QualityEncoding,
-        name_encoding: NameEncoding,
-        sort_key_kind: Option<SortKeyKind>,
-        target_records: usize,
-    ) -> Self {
+    /// Create a new block builder from the given configuration.
+    pub fn new(config: &BlockBuilderConfig) -> Self {
         Self {
-            index: Vec::with_capacity(target_records),
+            index: Vec::with_capacity(config.target_records),
             name_bytes: Vec::new(),
             sequence_bytes: Vec::new(),
             quality_bytes: Vec::new(),
-            sort_key_bytes: sort_key_kind.map(|_| Vec::new()),
-            sequence_encoding,
-            quality_encoding,
-            name_encoding,
-            sort_key_kind,
-            target_records,
+            sequence_encoding: config.sequence_encoding,
+            quality_encoding: config.quality_encoding,
+            name_encoding: config.name_encoding,
+            sort_key_kind: config.sort_key_kind,
+            target_records: config.target_records,
         }
     }
 
@@ -92,32 +79,12 @@ impl BlockBuilder {
             });
         }
 
-        let name_offset =
-            u32::try_from(self.name_bytes.len()).map_err(|_| DryIceError::CorruptBlockLayout {
-                message: "name section exceeds u32 range".to_string(),
-            })?;
-        let sequence_offset = u32::try_from(self.sequence_bytes.len()).map_err(|_| {
-            DryIceError::CorruptBlockLayout {
-                message: "sequence section exceeds u32 range".to_string(),
-            }
-        })?;
-        let quality_offset = u32::try_from(self.quality_bytes.len()).map_err(|_| {
-            DryIceError::CorruptBlockLayout {
-                message: "quality section exceeds u32 range".to_string(),
-            }
-        })?;
-
-        let name_len = u32::try_from(name.len()).map_err(|_| DryIceError::CorruptBlockLayout {
-            message: "name length exceeds u32 range".to_string(),
-        })?;
-        let sequence_len =
-            u32::try_from(sequence.len()).map_err(|_| DryIceError::CorruptBlockLayout {
-                message: "sequence length exceeds u32 range".to_string(),
-            })?;
-        let quality_len =
-            u32::try_from(quality.len()).map_err(|_| DryIceError::CorruptBlockLayout {
-                message: "quality length exceeds u32 range".to_string(),
-            })?;
+        let name_offset = to_u32(self.name_bytes.len(), "name section offset")?;
+        let sequence_offset = to_u32(self.sequence_bytes.len(), "sequence section offset")?;
+        let quality_offset = to_u32(self.quality_bytes.len(), "quality section offset")?;
+        let name_len = to_u32(name.len(), "name length")?;
+        let sequence_len = to_u32(sequence.len(), "sequence length")?;
+        let quality_len = to_u32(quality.len(), "quality length")?;
 
         self.name_bytes.extend_from_slice(name);
         self.sequence_bytes.extend_from_slice(sequence);
@@ -145,12 +112,6 @@ impl BlockBuilder {
         self.index.is_empty()
     }
 
-    /// The number of records currently in the block.
-    #[allow(dead_code)]
-    pub fn record_count(&self) -> usize {
-        self.index.len()
-    }
-
     /// Finalize the block, writing the block header and payload to the
     /// given writer. Resets internal state for reuse.
     ///
@@ -158,18 +119,17 @@ impl BlockBuilder {
     ///
     /// Returns an error if serialization or writing fails.
     pub fn write_block<W: std::io::Write>(&mut self, writer: &mut W) -> Result<(), DryIceError> {
-        let record_count =
-            u32::try_from(self.index.len()).map_err(|_| DryIceError::CorruptBlockLayout {
-                message: "record count exceeds u32 range".to_string(),
-            })?;
+        let record_count = to_u32(self.index.len(), "record count")?;
 
-        let index_len = self.index.len() as u64 * INDEX_ENTRY_SIZE;
-        let name_len = self.name_bytes.len() as u64;
-        let seq_len = self.sequence_bytes.len() as u64;
-        let qual_len = self.quality_bytes.len() as u64;
+        let index_len = u64::try_from(self.index.len()).expect("index length should fit in u64")
+            * INDEX_ENTRY_SIZE;
+        let name_len =
+            u64::try_from(self.name_bytes.len()).expect("name section length should fit in u64");
+        let seq_len = u64::try_from(self.sequence_bytes.len())
+            .expect("sequence section length should fit in u64");
+        let qual_len = u64::try_from(self.quality_bytes.len())
+            .expect("quality section length should fit in u64");
 
-        // Compute section offsets (relative to start of payload area,
-        // which begins immediately after the block header).
         let index_offset: u64 = 0;
         let names_offset = index_offset + index_len;
         let sequences_offset = names_offset + name_len;
@@ -208,13 +168,11 @@ impl BlockBuilder {
             } else {
                 None
             },
-            sort_keys: None, // TODO: accelerator support
+            sort_keys: None,
         };
 
-        // Write block header.
         format::write_block_header(writer, &header)?;
 
-        // Write index entries.
         for entry in &self.index {
             let mut buf = [0u8; 24];
             buf[0..4].copy_from_slice(&entry.name_offset.to_le_bytes());
@@ -226,12 +184,10 @@ impl BlockBuilder {
             writer.write_all(&buf)?;
         }
 
-        // Write payload sections.
         writer.write_all(&self.name_bytes)?;
         writer.write_all(&self.sequence_bytes)?;
         writer.write_all(&self.quality_bytes)?;
 
-        // Reset for next block.
         self.index.clear();
         self.name_bytes.clear();
         self.sequence_bytes.clear();

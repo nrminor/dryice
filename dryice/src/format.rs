@@ -110,7 +110,7 @@ fn tag_to_sequence_encoding(tag: u8) -> Result<SequenceEncoding, DryIceError> {
         SEQ_TAG_TWO_BIT_EXACT => Ok(SequenceEncoding::TwoBitExact),
         SEQ_TAG_TWO_BIT_LOSSY_N => Ok(SequenceEncoding::TwoBitLossyN),
         _ => Err(DryIceError::CorruptBlockHeader {
-            message: format!("unknown sequence encoding tag: {tag}"),
+            message: "unknown sequence encoding tag",
         }),
     }
 }
@@ -129,7 +129,7 @@ fn tag_to_quality_encoding(tag: u8) -> Result<QualityEncoding, DryIceError> {
         QUAL_TAG_BINNED => Ok(QualityEncoding::Binned),
         QUAL_TAG_OMITTED => Ok(QualityEncoding::Omitted),
         _ => Err(DryIceError::CorruptBlockHeader {
-            message: format!("unknown quality encoding tag: {tag}"),
+            message: "unknown quality encoding tag",
         }),
     }
 }
@@ -146,7 +146,7 @@ fn tag_to_name_encoding(tag: u8) -> Result<NameEncoding, DryIceError> {
         NAME_TAG_RAW => Ok(NameEncoding::Raw),
         NAME_TAG_OMITTED => Ok(NameEncoding::Omitted),
         _ => Err(DryIceError::CorruptBlockHeader {
-            message: format!("unknown name encoding tag: {tag}"),
+            message: "unknown name encoding tag",
         }),
     }
 }
@@ -165,7 +165,7 @@ fn tag_to_sort_key_kind(tag: u8) -> Result<Option<SortKeyKind>, DryIceError> {
         SORT_KEY_TAG_U64_MINIMIZER => Ok(Some(SortKeyKind::U64Minimizer)),
         SORT_KEY_TAG_U128_MINIMIZER => Ok(Some(SortKeyKind::U128Minimizer)),
         _ => Err(DryIceError::CorruptBlockHeader {
-            message: format!("unknown sort key tag: {tag}"),
+            message: "unknown sort key tag",
         }),
     }
 }

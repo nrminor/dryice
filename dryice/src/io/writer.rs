@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use crate::{
-    block::BlockBuilder,
+    block::{BlockBuilder, BlockBuilderConfig},
     codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind},
     config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions},
     error::DryIceError,
@@ -80,13 +80,13 @@ impl<W> DryIceWriter<W> {
             name_encoding,
             sort_key,
             target_block_records,
-            block_builder: BlockBuilder::new(
+            block_builder: BlockBuilder::new(&BlockBuilderConfig {
                 sequence_encoding,
                 quality_encoding,
                 name_encoding,
-                sort_key,
-                target_block_records,
-            ),
+                sort_key_kind: sort_key,
+                target_records: target_block_records,
+            }),
             header_written: false,
         }
     }
