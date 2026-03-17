@@ -12,6 +12,7 @@ mod builder;
 mod decoder;
 pub(crate) mod header;
 mod index;
+pub mod name;
 pub mod quality;
 pub mod sequence;
 

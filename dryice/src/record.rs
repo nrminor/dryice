@@ -144,6 +144,41 @@ impl SeqRecord {
     pub fn into_parts(self) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         (self.name, self.sequence, self.quality)
     }
+
+    /// The record name as a UTF-8 string, if valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::str::Utf8Error`] if the name bytes are not valid UTF-8.
+    pub fn name_str(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.name)
+    }
+
+    /// The nucleotide sequence as a UTF-8 string, if valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::str::Utf8Error`] if the sequence bytes are not valid UTF-8.
+    pub fn sequence_str(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.sequence)
+    }
+
+    /// The quality scores as a UTF-8 string, if valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::str::Utf8Error`] if the quality bytes are not valid UTF-8.
+    pub fn quality_str(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.quality)
+    }
+}
+
+impl std::fmt::Display for SeqRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = std::str::from_utf8(&self.name).unwrap_or("<non-utf8>");
+        let seq = std::str::from_utf8(&self.sequence).unwrap_or("<non-utf8>");
+        write!(f, "{name}\t{seq}\t({} bp)", self.sequence.len())
+    }
 }
 
 impl SeqRecordLike for SeqRecord {

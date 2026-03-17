@@ -5,6 +5,7 @@ use std::{io::Read, marker::PhantomData};
 use crate::{
     block::{
         BlockDecoder,
+        name::{NameCodec, RawNameCodec},
         quality::{QualityCodec, RawQualityCodec},
         sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
     },
@@ -15,22 +16,22 @@ use crate::{
 };
 
 /// Reads sequencing records from a `dryice` file.
-///
-/// The reader provides two access patterns:
-///
-/// - a zero-copy primary path via [`next_record`](Self::next_record), where the
-///   reader itself implements [`SeqRecordLike`] for the current record
-/// - a convenience [`into_records`](Self::into_records) iterator that allocates
-///   owned [`SeqRecord`] values for `for`-loop ergonomics
-pub struct DryIceReader<R, S = RawAsciiCodec, Q = RawQualityCodec, K = NoRecordKey> {
+pub struct DryIceReader<
+    R,
+    S = RawAsciiCodec,
+    Q = RawQualityCodec,
+    N = RawNameCodec,
+    K = NoRecordKey,
+> {
     inner: R,
     current_block: Option<BlockDecoder>,
     _codec: PhantomData<S>,
     _quality: PhantomData<Q>,
+    _name: PhantomData<N>,
     _key: PhantomData<K>,
 }
 
-impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
+impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey> {
     /// Open a `dryice` file for reading with default codecs.
     ///
     /// # Errors
@@ -44,6 +45,7 @@ impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
             current_block: None,
             _codec: PhantomData,
             _quality: PhantomData,
+            _name: PhantomData,
             _key: PhantomData,
         })
     }
@@ -56,59 +58,43 @@ impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     /// unsupported format version.
     pub fn with_two_bit_exact(
         mut inner: R,
-    ) -> Result<DryIceReader<R, TwoBitExactCodec, RawQualityCodec, NoRecordKey>, DryIceError> {
+    ) -> Result<
+        DryIceReader<R, TwoBitExactCodec, RawQualityCodec, RawNameCodec, NoRecordKey>,
+        DryIceError,
+    > {
         format::read_file_header(&mut inner)?;
         Ok(DryIceReader {
             inner,
             current_block: None,
             _codec: PhantomData,
             _quality: PhantomData,
+            _name: PhantomData,
             _key: PhantomData,
         })
     }
 
-    /// Open a reader configured for a user-defined sequence codec.
+    /// Open a reader configured for user-defined codecs.
     ///
     /// # Errors
     ///
     /// Returns an error if the file header is missing, corrupt, or uses an
     /// unsupported format version.
-    pub fn with_sequence_codec<S: SequenceCodec>(
+    pub fn with_codecs<S: SequenceCodec, Q: QualityCodec, N: NameCodec>(
         mut inner: R,
-    ) -> Result<DryIceReader<R, S, RawQualityCodec, NoRecordKey>, DryIceError> {
+    ) -> Result<DryIceReader<R, S, Q, N, NoRecordKey>, DryIceError> {
         format::read_file_header(&mut inner)?;
         Ok(DryIceReader {
             inner,
             current_block: None,
             _codec: PhantomData,
             _quality: PhantomData,
+            _name: PhantomData,
             _key: PhantomData,
         })
     }
 
-    /// Open a reader configured for user-defined sequence and quality codecs.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file header is missing, corrupt, or uses an
-    /// unsupported format version.
-    pub fn with_codecs<S: SequenceCodec, Q: QualityCodec>(
-        mut inner: R,
-    ) -> Result<DryIceReader<R, S, Q, NoRecordKey>, DryIceError> {
-        format::read_file_header(&mut inner)?;
-        Ok(DryIceReader {
-            inner,
-            current_block: None,
-            _codec: PhantomData,
-            _quality: PhantomData,
-            _key: PhantomData,
-        })
-    }
-}
-
-impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     /// Open a reader configured for a user-defined record-key type
-    /// with default sequence and quality codecs.
+    /// with default codecs.
     ///
     /// # Errors
     ///
@@ -116,19 +102,20 @@ impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     /// unsupported format version.
     pub fn with_record_key<K2: RecordKey>(
         mut inner: R,
-    ) -> Result<DryIceReader<R, RawAsciiCodec, RawQualityCodec, K2>, DryIceError> {
+    ) -> Result<DryIceReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, K2>, DryIceError>
+    {
         format::read_file_header(&mut inner)?;
         Ok(DryIceReader {
             inner,
             current_block: None,
             _codec: PhantomData,
             _quality: PhantomData,
+            _name: PhantomData,
             _key: PhantomData,
         })
     }
 
-    /// Open a reader configured for the built-in 8-byte key type
-    /// with default sequence and quality codecs.
+    /// Open a reader configured for the built-in 8-byte key type.
     ///
     /// # Errors
     ///
@@ -136,12 +123,12 @@ impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     /// unsupported format version.
     pub fn with_bytes8_key(
         inner: R,
-    ) -> Result<DryIceReader<R, RawAsciiCodec, RawQualityCodec, Bytes8Key>, DryIceError> {
+    ) -> Result<DryIceReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key>, DryIceError>
+    {
         Self::with_record_key::<Bytes8Key>(inner)
     }
 
-    /// Open a reader configured for the built-in 16-byte key type
-    /// with default sequence and quality codecs.
+    /// Open a reader configured for the built-in 16-byte key type.
     ///
     /// # Errors
     ///
@@ -149,12 +136,17 @@ impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     /// unsupported format version.
     pub fn with_bytes16_key(
         inner: R,
-    ) -> Result<DryIceReader<R, RawAsciiCodec, RawQualityCodec, Bytes16Key>, DryIceError> {
+    ) -> Result<
+        DryIceReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes16Key>,
+        DryIceError,
+    > {
         Self::with_record_key::<Bytes16Key>(inner)
     }
 }
 
-impl<R: Read, S: SequenceCodec, Q: QualityCodec, K: RecordKey> DryIceReader<R, S, Q, K> {
+impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
+    DryIceReader<R, S, Q, N, K>
+{
     /// Decode the current record's accelerator key.
     ///
     /// # Errors
@@ -172,7 +164,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, K: RecordKey> DryIceReader<R, S
     }
 }
 
-impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> DryIceReader<R, S, Q, K> {
+impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R, S, Q, N, K> {
     /// Advance to the next record in the file.
     ///
     /// # Errors
@@ -182,7 +174,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> DryIceReader<R, S, Q, K> {
     /// configured codecs.
     pub fn next_record(&mut self) -> Result<bool, DryIceError> {
         if let Some(block) = &mut self.current_block
-            && block.advance(S::decode, Q::decode)?
+            && block.advance(S::decode, Q::decode, N::decode_to_bytes)?
         {
             return Ok(true);
         }
@@ -201,9 +193,15 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> DryIceReader<R, S, Q, K> {
                         found: header.quality_codec_tag,
                     });
                 }
+                if header.name_codec_tag != N::TYPE_TAG {
+                    return Err(DryIceError::NameCodecMismatch {
+                        expected: N::TYPE_TAG,
+                        found: header.name_codec_tag,
+                    });
+                }
 
                 let mut decoder = BlockDecoder::from_header_and_reader(header, &mut self.inner)?;
-                if decoder.advance(S::decode, Q::decode)? {
+                if decoder.advance(S::decode, Q::decode, N::decode_to_bytes)? {
                     self.current_block = Some(decoder);
                     return Ok(true);
                 }
@@ -215,12 +213,14 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> DryIceReader<R, S, Q, K> {
     }
 
     /// Consume this reader into an iterator of owned [`SeqRecord`] values.
-    pub fn into_records(self) -> DryIceRecords<R, S, Q, K> {
+    pub fn into_records(self) -> DryIceRecords<R, S, Q, N, K> {
         DryIceRecords { reader: self }
     }
 }
 
-impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> SeqRecordLike for DryIceReader<R, S, Q, K> {
+impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> SeqRecordLike
+    for DryIceReader<R, S, Q, N, K>
+{
     fn name(&self) -> &[u8] {
         self.current_block
             .as_ref()
@@ -244,11 +244,19 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> SeqRecordLike for DryIceRead
 }
 
 /// Iterator over records in a `dryice` file, yielding owned [`SeqRecord`] values.
-pub struct DryIceRecords<R, S = RawAsciiCodec, Q = RawQualityCodec, K = NoRecordKey> {
-    reader: DryIceReader<R, S, Q, K>,
+pub struct DryIceRecords<
+    R,
+    S = RawAsciiCodec,
+    Q = RawQualityCodec,
+    N = RawNameCodec,
+    K = NoRecordKey,
+> {
+    reader: DryIceReader<R, S, Q, N, K>,
 }
 
-impl<R: Read, S: SequenceCodec, Q: QualityCodec, K> Iterator for DryIceRecords<R, S, Q, K> {
+impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> Iterator
+    for DryIceRecords<R, S, Q, N, K>
+{
     type Item = Result<SeqRecord, DryIceError>;
 
     fn next(&mut self) -> Option<Self::Item> {

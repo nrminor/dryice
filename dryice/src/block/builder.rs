@@ -3,9 +3,9 @@
 use crate::{
     block::{
         header::{BlockHeader, ByteRange},
+        name::OmittedNameCodec,
         quality::OmittedQualityCodec,
     },
-    codec::NameEncoding,
     error::DryIceError,
     format,
     key::RecordKey,
@@ -25,12 +25,13 @@ fn to_u32(value: usize, field: &'static str) -> Result<u32, DryIceError> {
 pub(crate) struct BlockBuilderConfig {
     pub sequence_codec_tag: [u8; 16],
     pub quality_codec_tag: [u8; 16],
-    pub name_encoding: NameEncoding,
+    pub name_codec_tag: [u8; 16],
     pub record_key_width: Option<u16>,
     pub record_key_tag: Option<[u8; 16]>,
     pub target_records: usize,
     pub sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
     pub quality_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
+    pub name_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 /// Accumulates records into a single block's worth of data.
@@ -42,12 +43,13 @@ pub(crate) struct BlockBuilder {
     record_key_bytes: Option<Vec<u8>>,
     sequence_codec_tag: [u8; 16],
     quality_codec_tag: [u8; 16],
-    name_encoding: NameEncoding,
+    name_codec_tag: [u8; 16],
     record_key_width: u16,
     record_key_tag: [u8; 16],
     target_records: usize,
     sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
     quality_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
+    name_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 impl BlockBuilder {
@@ -61,12 +63,13 @@ impl BlockBuilder {
             record_key_bytes: config.record_key_width.map(|_| Vec::new()),
             sequence_codec_tag: config.sequence_codec_tag,
             quality_codec_tag: config.quality_codec_tag,
-            name_encoding: config.name_encoding,
+            name_codec_tag: config.name_codec_tag,
             record_key_width: config.record_key_width.unwrap_or(0),
             record_key_tag: config.record_key_tag.unwrap_or([0; 16]),
             target_records: config.target_records,
             sequence_encode_fn: config.sequence_encode_fn,
             quality_encode_fn: config.quality_encode_fn,
+            name_encode_fn: config.name_encode_fn,
         }
     }
 
@@ -113,9 +116,10 @@ impl BlockBuilder {
         let name_offset = to_u32(self.name_bytes.len(), "name section offset")?;
         let sequence_offset = to_u32(self.sequence_bytes.len(), "sequence section offset")?;
         let quality_offset = to_u32(self.quality_bytes.len(), "quality section offset")?;
-        let name_len = to_u32(name.len(), "name length")?;
 
-        self.name_bytes.extend_from_slice(name);
+        let encoded_name = (self.name_encode_fn)(name)?;
+        let name_len = to_u32(encoded_name.len(), "encoded name length")?;
+        self.name_bytes.extend_from_slice(&encoded_name);
 
         let encoded_seq = (self.sequence_encode_fn)(raw_sequence)?;
         let encoded_sequence_len = to_u32(encoded_seq.len(), "encoded sequence length")?;
@@ -168,19 +172,21 @@ impl BlockBuilder {
 
         let quality_omitted = self.quality_codec_tag
             == <OmittedQualityCodec as crate::block::quality::QualityCodec>::TYPE_TAG;
+        let names_omitted =
+            self.name_codec_tag == <OmittedNameCodec as crate::block::name::NameCodec>::TYPE_TAG;
 
         let header = BlockHeader {
             record_count,
             sequence_codec_tag: self.sequence_codec_tag,
             quality_codec_tag: self.quality_codec_tag,
-            name_encoding: self.name_encoding,
+            name_codec_tag: self.name_codec_tag,
             record_key_width: self.record_key_width,
             record_key_tag: self.record_key_tag,
             index: ByteRange {
                 offset: index_offset,
                 len: index_len,
             },
-            names: if self.name_encoding == NameEncoding::Omitted {
+            names: if names_omitted {
                 None
             } else {
                 Some(ByteRange {

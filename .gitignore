@@ -28,7 +28,6 @@
 !/dryice/src/lib.rs
 !/dryice/src/error.rs
 !/dryice/src/record.rs
-!/dryice/src/codec.rs
 !/dryice/src/block
 !/dryice/src/block/mod.rs
 !/dryice/src/block/builder.rs
@@ -36,6 +35,7 @@
 !/dryice/src/block/header.rs
 !/dryice/src/block/index.rs
 !/dryice/src/block/quality.rs
+!/dryice/src/block/name.rs
 !/dryice/src/block/sequence.rs
 !/dryice/src/config.rs
 !/dryice/src/format.rs

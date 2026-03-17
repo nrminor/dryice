@@ -1,7 +1,5 @@
 //! Block header and layout metadata.
 
-use crate::codec::NameEncoding;
-
 /// A byte range within a serialized block, identified by offset and length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ByteRange {
@@ -29,8 +27,8 @@ pub(crate) struct BlockHeader {
     /// Stable type tag identifying the quality codec.
     pub quality_codec_tag: [u8; 16],
 
-    /// How names are encoded in this block.
-    pub name_encoding: NameEncoding,
+    /// Stable type tag identifying the name codec.
+    pub name_codec_tag: [u8; 16],
 
     /// Width in bytes of the record-key section entries, or zero if absent.
     pub record_key_width: u16,

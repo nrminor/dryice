@@ -2,7 +2,6 @@
 
 use crate::{
     block::header::{BlockHeader, ByteRange},
-    codec::NameEncoding,
     error::DryIceError,
 };
 
@@ -14,8 +13,9 @@ const INDEX_ENTRY_SIZE: usize = 24;
 /// Decodes records from a single parsed block.
 ///
 /// Holds the block header, parsed index, and raw section bytes.
-/// Sequence and quality decoding is driven by the reader, which
-/// knows the codec types statically and calls their decode methods.
+/// Sequence, quality, and name decoding is driven by the reader,
+/// which knows the codec types statically and passes their decode
+/// functions.
 pub(crate) struct BlockDecoder {
     header: BlockHeader,
     index: Vec<RecordIndexEntry>,
@@ -25,6 +25,7 @@ pub(crate) struct BlockDecoder {
     record_key_bytes: Option<Vec<u8>>,
     cursor: usize,
     started: bool,
+    decoded_name_buf: Vec<u8>,
     decoded_sequence_buf: Vec<u8>,
     decoded_quality_buf: Vec<u8>,
 }
@@ -62,13 +63,13 @@ impl BlockDecoder {
             });
         }
 
-        let name_bytes = if header.name_encoding == NameEncoding::Omitted {
-            None
-        } else {
+        let name_bytes = if header.names.is_some() {
             let len = section_len(header.names)?;
             let mut buf = vec![0u8; len];
             reader.read_exact(&mut buf)?;
             Some(buf)
+        } else {
+            None
         };
 
         let seq_len =
@@ -105,19 +106,18 @@ impl BlockDecoder {
             record_key_bytes,
             cursor: 0,
             started: false,
+            decoded_name_buf: Vec::new(),
             decoded_sequence_buf: Vec::new(),
             decoded_quality_buf: Vec::new(),
         })
     }
 
     /// Advance to the next record in this block.
-    ///
-    /// `seq_decode_fn` and `qual_decode_fn` are the statically-known
-    /// codec decode functions provided by the reader.
     pub fn advance(
         &mut self,
         seq_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
         qual_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+        name_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
     ) -> Result<bool, DryIceError> {
         if self.started {
             self.cursor += 1;
@@ -129,10 +129,29 @@ impl BlockDecoder {
             return Ok(false);
         }
 
+        self.decode_current_name(name_decode_fn)?;
         self.decode_current_sequence(seq_decode_fn)?;
         self.decode_current_quality(qual_decode_fn)?;
 
         Ok(true)
+    }
+
+    fn decode_current_name(
+        &mut self,
+        decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+    ) -> Result<(), DryIceError> {
+        if let Some(names) = &self.name_bytes {
+            let entry = &self.index[self.cursor];
+            let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
+            let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
+            let encoded = &names[start..start + len];
+
+            let original_len = len;
+            self.decoded_name_buf = decode_fn(encoded, original_len)?;
+        } else {
+            self.decoded_name_buf.clear();
+        }
+        Ok(())
     }
 
     fn decode_current_sequence(
@@ -169,16 +188,9 @@ impl BlockDecoder {
         Ok(())
     }
 
-    /// The current record's name.
+    /// The current record's decoded name bytes.
     pub fn current_name(&self) -> &[u8] {
-        let entry = &self.index[self.cursor];
-        if let Some(names) = &self.name_bytes {
-            let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
-            let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
-            &names[start..start + len]
-        } else {
-            &[]
-        }
+        &self.decoded_name_buf
     }
 
     /// The current record's decoded sequence.

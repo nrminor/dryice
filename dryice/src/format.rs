@@ -8,7 +8,6 @@ use std::io::{Read, Write};
 
 use crate::{
     block::header::{BlockHeader, ByteRange},
-    codec::NameEncoding,
     error::DryIceError,
 };
 
@@ -31,8 +30,9 @@ const FILE_HEADER_SIZE: usize = 8;
 /// [4 bytes]  record_count          u32 le
 /// [16 bytes] sequence_codec_tag    [u8; 16]
 /// [16 bytes] quality_codec_tag     [u8; 16]
-/// [1 byte]   name_encoding         u8
+/// [16 bytes] name_codec_tag        [u8; 16]
 /// [1 byte]   has_record_key        u8
+/// [1 byte]   reserved              u8
 /// [2 bytes]  record_key_width      u16 le
 /// [16 bytes] record_key_tag        [u8; 16]
 /// [16 bytes] index range           offset u64 le + len u64 le
@@ -41,10 +41,7 @@ const FILE_HEADER_SIZE: usize = 8;
 /// [16 bytes] qualities range       offset u64 le + len u64 le
 /// [16 bytes] record_keys range     offset u64 le + len u64 le
 /// ```
-const BLOCK_HEADER_SIZE: usize = 136;
-
-const NAME_TAG_RAW: u8 = 0;
-const NAME_TAG_OMITTED: u8 = 1;
+const BLOCK_HEADER_SIZE: usize = 152;
 
 /// Write the file header to the given writer.
 pub(crate) fn write_file_header<W: Write>(writer: &mut W) -> Result<(), DryIceError> {
@@ -75,23 +72,6 @@ pub(crate) fn read_file_header<R: Read>(reader: &mut R) -> Result<(u16, u16), Dr
     }
 
     Ok((major, minor))
-}
-
-fn name_encoding_to_tag(enc: NameEncoding) -> u8 {
-    match enc {
-        NameEncoding::Raw => NAME_TAG_RAW,
-        NameEncoding::Omitted => NAME_TAG_OMITTED,
-    }
-}
-
-fn tag_to_name_encoding(tag: u8) -> Result<NameEncoding, DryIceError> {
-    match tag {
-        NAME_TAG_RAW => Ok(NameEncoding::Raw),
-        NAME_TAG_OMITTED => Ok(NameEncoding::Omitted),
-        _ => Err(DryIceError::CorruptBlockHeader {
-            message: "unknown name encoding tag",
-        }),
-    }
 }
 
 fn write_byte_range(buf: &mut [u8], range: ByteRange) {
@@ -130,16 +110,17 @@ pub(crate) fn write_block_header<W: Write>(
     buf[0..4].copy_from_slice(&header.record_count.to_le_bytes());
     buf[4..20].copy_from_slice(&header.sequence_codec_tag);
     buf[20..36].copy_from_slice(&header.quality_codec_tag);
-    buf[36] = name_encoding_to_tag(header.name_encoding);
-    buf[37] = u8::from(header.record_keys.is_some());
-    buf[38..40].copy_from_slice(&header.record_key_width.to_le_bytes());
-    buf[40..56].copy_from_slice(&header.record_key_tag);
+    buf[36..52].copy_from_slice(&header.name_codec_tag);
+    buf[52] = u8::from(header.record_keys.is_some());
+    buf[53] = 0; // reserved
+    buf[54..56].copy_from_slice(&header.record_key_width.to_le_bytes());
+    buf[56..72].copy_from_slice(&header.record_key_tag);
 
-    write_byte_range(&mut buf[56..72], header.index);
-    write_optional_byte_range(&mut buf[72..88], header.names);
-    write_byte_range(&mut buf[88..104], header.sequences);
-    write_optional_byte_range(&mut buf[104..120], header.qualities);
-    write_optional_byte_range(&mut buf[120..136], header.record_keys);
+    write_byte_range(&mut buf[72..88], header.index);
+    write_optional_byte_range(&mut buf[88..104], header.names);
+    write_byte_range(&mut buf[104..120], header.sequences);
+    write_optional_byte_range(&mut buf[120..136], header.qualities);
+    write_optional_byte_range(&mut buf[136..152], header.record_keys);
 
     writer.write_all(&buf)?;
     Ok(())
@@ -160,18 +141,19 @@ pub(crate) fn read_block_header<R: Read>(
     let record_count = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
     let sequence_codec_tag = read_tag16(&buf[4..20]);
     let quality_codec_tag = read_tag16(&buf[20..36]);
-    let name_encoding = tag_to_name_encoding(buf[36])?;
-    let has_record_key = buf[37] != 0;
-    let record_key_width = u16::from_le_bytes([buf[38], buf[39]]);
-    let record_key_tag = read_tag16(&buf[40..56]);
+    let name_codec_tag = read_tag16(&buf[36..52]);
+    let has_record_key = buf[52] != 0;
+    // buf[53] is reserved
+    let record_key_width = u16::from_le_bytes([buf[54], buf[55]]);
+    let record_key_tag = read_tag16(&buf[56..72]);
 
-    let index = read_byte_range(&buf[56..72]);
-    let names_range = read_byte_range(&buf[72..88]);
-    let sequences = read_byte_range(&buf[88..104]);
-    let qualities_range = read_byte_range(&buf[104..120]);
-    let record_keys_range = read_byte_range(&buf[120..136]);
+    let index = read_byte_range(&buf[72..88]);
+    let names_range = read_byte_range(&buf[88..104]);
+    let sequences = read_byte_range(&buf[104..120]);
+    let qualities_range = read_byte_range(&buf[120..136]);
+    let record_keys_range = read_byte_range(&buf[136..152]);
 
-    let names = if name_encoding == NameEncoding::Omitted {
+    let names = if name_codec_tag == *b"dryi:name:omittd" {
         None
     } else {
         Some(names_range)
@@ -193,7 +175,7 @@ pub(crate) fn read_block_header<R: Read>(
         record_count,
         sequence_codec_tag,
         quality_codec_tag,
-        name_encoding,
+        name_codec_tag,
         record_key_width,
         record_key_tag,
         index,
@@ -232,7 +214,7 @@ mod tests {
             record_count: 42,
             sequence_codec_tag: *b"dryi:seq:2b-exct",
             quality_codec_tag: *b"dryi:qual:binned",
-            name_encoding: NameEncoding::Raw,
+            name_codec_tag: *b"dryi:name:raw!!!",
             record_key_width: 16,
             record_key_tag: *b"dryi:bytes16:key",
             index: ByteRange {
@@ -268,7 +250,7 @@ mod tests {
         assert_eq!(parsed.record_count, header.record_count);
         assert_eq!(parsed.sequence_codec_tag, header.sequence_codec_tag);
         assert_eq!(parsed.quality_codec_tag, header.quality_codec_tag);
-        assert_eq!(parsed.name_encoding, header.name_encoding);
+        assert_eq!(parsed.name_codec_tag, header.name_codec_tag);
         assert_eq!(parsed.record_key_width, header.record_key_width);
         assert_eq!(parsed.record_key_tag, header.record_key_tag);
         assert_eq!(parsed.index, header.index);
@@ -284,7 +266,7 @@ mod tests {
             record_count: 10,
             sequence_codec_tag: *b"dryi:seq:raw-asc",
             quality_codec_tag: *b"dryi:qual:omittd",
-            name_encoding: NameEncoding::Omitted,
+            name_codec_tag: *b"dryi:name:omittd",
             record_key_width: 0,
             record_key_tag: [0; 16],
             index: ByteRange { offset: 0, len: 50 },
@@ -305,7 +287,7 @@ mod tests {
             .expect("should not be EOF");
 
         assert_eq!(parsed.record_count, 10);
-        assert_eq!(parsed.name_encoding, NameEncoding::Omitted);
+        assert_eq!(parsed.name_codec_tag, *b"dryi:name:omittd");
         assert_eq!(parsed.quality_codec_tag, *b"dryi:qual:omittd");
         assert_eq!(parsed.record_key_width, 0);
         assert!(parsed.names.is_none());

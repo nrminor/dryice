@@ -2,7 +2,7 @@
 
 use dryice::{
     BlockLayoutOptions, BlockSizePolicy, Bytes8Key, Bytes16Key, DryIceReader, DryIceWriter,
-    DryIceWriterOptions, NameEncoding, RawAsciiCodec, RawQualityCodec, RecordKey, SeqRecord,
+    DryIceWriterOptions, RawAsciiCodec, RawNameCodec, RawQualityCodec, RecordKey, SeqRecord,
     SeqRecordExt, SeqRecordLike,
 };
 use proptest::prelude::*;
@@ -407,14 +407,15 @@ fn reader_rejects_truncated_header() {
 #[test]
 fn from_options_rejects_target_bytes() {
     let options = DryIceWriterOptions {
-        name_encoding: NameEncoding::Raw,
         layout: BlockLayoutOptions {
             block_size: BlockSizePolicy::TargetBytes(4096),
         },
     };
 
     let buf = Vec::new();
-    let result = DryIceWriter::<_, RawAsciiCodec, RawQualityCodec, _>::from_options(buf, &options);
+    let result = DryIceWriter::<_, RawAsciiCodec, RawQualityCodec, RawNameCodec, _>::from_options(
+        buf, &options,
+    );
     assert!(
         result.is_err(),
         "from_options should reject TargetBytes block size policy"
@@ -555,11 +556,12 @@ fn binned_quality_round_trip() {
     }
     writer.finish().expect("finish should succeed");
 
-    let mut reader =
-        DryIceReader::with_codecs::<dryice::RawAsciiCodec, dryice::BinnedQualityCodec>(
-            buf.as_slice(),
-        )
-        .expect("reader should open");
+    let mut reader = DryIceReader::with_codecs::<
+        dryice::RawAsciiCodec,
+        dryice::BinnedQualityCodec,
+        dryice::RawNameCodec,
+    >(buf.as_slice())
+    .expect("reader should open");
     let mut read_back = Vec::new();
     while reader.next_record().expect("next_record should succeed") {
         read_back.push(
@@ -599,11 +601,12 @@ fn binned_quality_is_lossy() {
         .expect("write should succeed");
     writer.finish().expect("finish should succeed");
 
-    let mut reader =
-        DryIceReader::with_codecs::<dryice::RawAsciiCodec, dryice::BinnedQualityCodec>(
-            buf.as_slice(),
-        )
-        .expect("reader should open");
+    let mut reader = DryIceReader::with_codecs::<
+        dryice::RawAsciiCodec,
+        dryice::BinnedQualityCodec,
+        dryice::RawNameCodec,
+    >(buf.as_slice())
+    .expect("reader should open");
     assert!(reader.next_record().expect("next_record should succeed"));
 
     let decoded_qual = reader.quality();
@@ -636,6 +639,7 @@ fn two_bit_exact_with_binned_quality_round_trip() {
     let mut reader = DryIceReader::with_codecs::<
         dryice::TwoBitExactCodec,
         dryice::BinnedQualityCodec,
+        dryice::RawNameCodec,
     >(buf.as_slice())
     .expect("reader should open");
     assert!(reader.next_record().expect("next_record should succeed"));

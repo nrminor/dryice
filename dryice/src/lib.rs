@@ -12,14 +12,14 @@
 //! # Writing records
 //!
 //! ```no_run
-//! use dryice::{DryIceWriter, SequenceEncoding, QualityEncoding};
+//! use dryice::DryIceWriter;
 //!
 //! # fn example() -> Result<(), dryice::DryIceError> {
 //! let file = std::fs::File::create("reads.dryice")?;
 //! let mut writer = DryIceWriter::builder()
 //!     .inner(file)
-//!     .sequence_encoding(SequenceEncoding::TwoBitExact)
-//!     .quality_encoding(QualityEncoding::Binned)
+//!     .two_bit_exact()
+//!     .binned_quality()
 //!     .target_block_records(4096)
 //!     .build();
 //!
@@ -64,7 +64,6 @@
 //! ```
 
 mod block;
-pub mod codec;
 pub mod config;
 mod error;
 mod format;
@@ -73,11 +72,11 @@ pub mod key;
 mod record;
 
 pub use block::{
+    name::{NameCodec, OmittedNameCodec, RawNameCodec, SplitNameCodec},
     quality::{BinnedQualityCodec, OmittedQualityCodec, QualityCodec, RawQualityCodec},
-    sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
+    sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec, TwoBitLossyNCodec},
 };
-pub use codec::{BlockSizePolicy, NameEncoding};
-pub use config::{BlockLayoutOptions, DryIceWriterOptions};
+pub use config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter};
 pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};

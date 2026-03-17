@@ -100,27 +100,6 @@ pub enum DryIceError {
         section: &'static str,
     },
 
-    /// The block uses a sequence encoding this build does not support.
-    #[error("unsupported sequence encoding: {encoding:?}")]
-    UnsupportedSequenceEncoding {
-        /// The unsupported encoding.
-        encoding: crate::codec::SequenceEncoding,
-    },
-
-    /// The block uses a quality encoding this build does not support.
-    #[error("unsupported quality encoding: {encoding:?}")]
-    UnsupportedQualityEncoding {
-        /// The unsupported encoding.
-        encoding: crate::codec::QualityEncoding,
-    },
-
-    /// The block uses a name encoding this build does not support.
-    #[error("unsupported name encoding: {encoding:?}")]
-    UnsupportedNameEncoding {
-        /// The unsupported encoding.
-        encoding: crate::codec::NameEncoding,
-    },
-
     /// A block checksum did not match the computed value.
     #[error("block checksum mismatch")]
     ChecksumMismatch,
@@ -163,6 +142,15 @@ pub enum DryIceError {
     /// The block's quality codec tag does not match the reader's configured codec.
     #[error("quality codec mismatch: file contains tag {found:?}, but reader expects {expected:?}")]
     QualityCodecMismatch {
+        /// The tag the reader expected.
+        expected: [u8; 16],
+        /// The tag found in the block header.
+        found: [u8; 16],
+    },
+
+    /// The block's name codec tag does not match the reader's configured codec.
+    #[error("name codec mismatch: file contains tag {found:?}, but reader expects {expected:?}")]
+    NameCodecMismatch {
         /// The tag the reader expected.
         expected: [u8; 16],
         /// The tag found in the block header.
