@@ -3,9 +3,12 @@
 use std::{io::Write, marker::PhantomData};
 
 use crate::{
-    block::sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
-    block::{BlockBuilder, BlockBuilderConfig},
-    codec::{BlockSizePolicy, NameEncoding, QualityEncoding},
+    block::{
+        BlockBuilder, BlockBuilderConfig,
+        quality::{BinnedQualityCodec, OmittedQualityCodec, QualityCodec, RawQualityCodec},
+        sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
+    },
+    codec::{BlockSizePolicy, NameEncoding},
     config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions},
     error::DryIceError,
     format,
@@ -17,36 +20,34 @@ use crate::{
 pub struct MissingInner;
 
 /// Builder for [`DryIceWriter`].
-pub struct DryIceWriterBuilder<W = MissingInner, S = RawAsciiCodec, K = NoRecordKey> {
+pub struct DryIceWriterBuilder<
+    W = MissingInner,
+    S = RawAsciiCodec,
+    Q = RawQualityCodec,
+    K = NoRecordKey,
+> {
     inner: W,
-    quality_encoding: QualityEncoding,
     name_encoding: NameEncoding,
     target_block_records: usize,
     _codec: PhantomData<S>,
+    _quality: PhantomData<Q>,
     _key: PhantomData<K>,
 }
 
-impl DryIceWriterBuilder<MissingInner, RawAsciiCodec, NoRecordKey> {
+impl DryIceWriterBuilder<MissingInner, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     fn new() -> Self {
         Self {
             inner: MissingInner,
-            quality_encoding: QualityEncoding::Raw,
             name_encoding: NameEncoding::Raw,
             target_block_records: 8192,
             _codec: PhantomData,
+            _quality: PhantomData,
             _key: PhantomData,
         }
     }
 }
 
-impl<W, S, K> DryIceWriterBuilder<W, S, K> {
-    /// Set the quality encoding for new blocks.
-    #[must_use]
-    pub fn quality_encoding(mut self, encoding: QualityEncoding) -> Self {
-        self.quality_encoding = encoding;
-        self
-    }
-
+impl<W, S, Q, K> DryIceWriterBuilder<W, S, Q, K> {
     /// Set the name encoding for new blocks.
     #[must_use]
     pub fn name_encoding(mut self, encoding: NameEncoding) -> Self {
@@ -62,179 +63,186 @@ impl<W, S, K> DryIceWriterBuilder<W, S, K> {
     }
 }
 
-impl<S, K> DryIceWriterBuilder<MissingInner, S, K> {
+impl<S, Q, K> DryIceWriterBuilder<MissingInner, S, Q, K> {
     /// Set the writer's output target.
     #[must_use]
-    pub fn inner<W>(self, inner: W) -> DryIceWriterBuilder<W, S, K> {
+    pub fn inner<W>(self, inner: W) -> DryIceWriterBuilder<W, S, Q, K> {
         DryIceWriterBuilder {
             inner,
-            quality_encoding: self.quality_encoding,
             name_encoding: self.name_encoding,
             target_block_records: self.target_block_records,
             _codec: PhantomData,
+            _quality: PhantomData,
             _key: PhantomData,
         }
     }
 }
 
-impl<W, K> DryIceWriterBuilder<W, RawAsciiCodec, K> {
+impl<W, Q, K> DryIceWriterBuilder<W, RawAsciiCodec, Q, K> {
     /// Configure the writer to use a user-defined sequence codec.
     #[must_use]
-    pub fn sequence_codec<S: SequenceCodec>(self) -> DryIceWriterBuilder<W, S, K> {
+    pub fn sequence_codec<S: SequenceCodec>(self) -> DryIceWriterBuilder<W, S, Q, K> {
         DryIceWriterBuilder {
             inner: self.inner,
-            quality_encoding: self.quality_encoding,
             name_encoding: self.name_encoding,
             target_block_records: self.target_block_records,
             _codec: PhantomData,
+            _quality: PhantomData,
             _key: PhantomData,
         }
     }
 
     /// Configure the writer to use the built-in 2-bit exact codec.
     #[must_use]
-    pub fn two_bit_exact(self) -> DryIceWriterBuilder<W, TwoBitExactCodec, K> {
+    pub fn two_bit_exact(self) -> DryIceWriterBuilder<W, TwoBitExactCodec, Q, K> {
         self.sequence_codec::<TwoBitExactCodec>()
     }
 }
 
-impl<W, S, K> DryIceWriterBuilder<W, S, K>
-where
-    S: SequenceCodec,
-{
-    /// Configure the writer to store a user-defined record-key type.
+impl<W, S, K> DryIceWriterBuilder<W, S, RawQualityCodec, K> {
+    /// Configure the writer to use a user-defined quality codec.
     #[must_use]
-    pub fn record_key<K2: RecordKey>(self) -> DryIceWriterBuilder<W, S, K2> {
+    pub fn quality_codec<Q: QualityCodec>(self) -> DryIceWriterBuilder<W, S, Q, K> {
         DryIceWriterBuilder {
             inner: self.inner,
-            quality_encoding: self.quality_encoding,
             name_encoding: self.name_encoding,
             target_block_records: self.target_block_records,
             _codec: PhantomData,
+            _quality: PhantomData,
+            _key: PhantomData,
+        }
+    }
+
+    /// Configure the writer to use the built-in binned quality codec.
+    #[must_use]
+    pub fn binned_quality(self) -> DryIceWriterBuilder<W, S, BinnedQualityCodec, K> {
+        self.quality_codec::<BinnedQualityCodec>()
+    }
+
+    /// Configure the writer to omit quality scores entirely.
+    #[must_use]
+    pub fn omit_quality(self) -> DryIceWriterBuilder<W, S, OmittedQualityCodec, K> {
+        self.quality_codec::<OmittedQualityCodec>()
+    }
+}
+
+impl<W, S, Q> DryIceWriterBuilder<W, S, Q, NoRecordKey> {
+    /// Configure the writer to store a user-defined record-key type.
+    #[must_use]
+    pub fn record_key<K: RecordKey>(self) -> DryIceWriterBuilder<W, S, Q, K> {
+        DryIceWriterBuilder {
+            inner: self.inner,
+            name_encoding: self.name_encoding,
+            target_block_records: self.target_block_records,
+            _codec: PhantomData,
+            _quality: PhantomData,
             _key: PhantomData,
         }
     }
 
     /// Configure the writer to store the built-in 8-byte key type.
     #[must_use]
-    pub fn bytes8_key(self) -> DryIceWriterBuilder<W, S, Bytes8Key> {
+    pub fn bytes8_key(self) -> DryIceWriterBuilder<W, S, Q, Bytes8Key> {
         self.record_key::<Bytes8Key>()
     }
 
     /// Configure the writer to store the built-in 16-byte key type.
     #[must_use]
-    pub fn bytes16_key(self) -> DryIceWriterBuilder<W, S, Bytes16Key> {
+    pub fn bytes16_key(self) -> DryIceWriterBuilder<W, S, Q, Bytes16Key> {
         self.record_key::<Bytes16Key>()
     }
 }
 
-impl<W: Write, S: SequenceCodec> DryIceWriterBuilder<W, S, NoRecordKey> {
+impl<W: Write, S: SequenceCodec, Q: QualityCodec> DryIceWriterBuilder<W, S, Q, NoRecordKey> {
     /// Build an unkeyed writer.
     #[must_use]
-    pub fn build(self) -> DryIceWriter<W, S, NoRecordKey> {
-        DryIceWriter::new_unkeyed(
-            self.inner,
-            self.quality_encoding,
-            self.name_encoding,
-            self.target_block_records,
-        )
+    pub fn build(self) -> DryIceWriter<W, S, Q, NoRecordKey> {
+        DryIceWriter::new_unkeyed(self.inner, self.name_encoding, self.target_block_records)
     }
 }
 
-impl<W: Write, S: SequenceCodec, K: RecordKey> DryIceWriterBuilder<W, S, K> {
+impl<W: Write, S: SequenceCodec, Q: QualityCodec, K: RecordKey> DryIceWriterBuilder<W, S, Q, K> {
     /// Build a keyed writer.
     #[must_use]
-    pub fn build(self) -> DryIceWriter<W, S, K> {
-        DryIceWriter::new_keyed(
-            self.inner,
-            self.quality_encoding,
-            self.name_encoding,
-            self.target_block_records,
-        )
+    pub fn build(self) -> DryIceWriter<W, S, Q, K> {
+        DryIceWriter::new_keyed(self.inner, self.name_encoding, self.target_block_records)
     }
 }
 
 /// Writes sequencing records into the `dryice` block-oriented format.
-pub struct DryIceWriter<W, S = RawAsciiCodec, K = NoRecordKey> {
+pub struct DryIceWriter<W, S = RawAsciiCodec, Q = RawQualityCodec, K = NoRecordKey> {
     inner: W,
-    quality_encoding: QualityEncoding,
     name_encoding: NameEncoding,
     target_block_records: usize,
     block_builder: BlockBuilder,
     header_written: bool,
     _codec: PhantomData<S>,
+    _quality: PhantomData<Q>,
     _key: PhantomData<K>,
 }
 
-impl DryIceWriter<MissingInner, RawAsciiCodec, NoRecordKey> {
+impl DryIceWriter<MissingInner, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
     /// Start building a new writer.
     #[must_use]
-    pub fn builder() -> DryIceWriterBuilder<MissingInner, RawAsciiCodec, NoRecordKey> {
+    pub fn builder()
+    -> DryIceWriterBuilder<MissingInner, RawAsciiCodec, RawQualityCodec, NoRecordKey> {
         DryIceWriterBuilder::new()
     }
 }
 
-impl<W, S: SequenceCodec> DryIceWriter<W, S, NoRecordKey> {
-    fn new_unkeyed(
-        inner: W,
-        quality_encoding: QualityEncoding,
-        name_encoding: NameEncoding,
-        target_block_records: usize,
-    ) -> Self {
+impl<W, S: SequenceCodec, Q: QualityCodec> DryIceWriter<W, S, Q, NoRecordKey> {
+    fn new_unkeyed(inner: W, name_encoding: NameEncoding, target_block_records: usize) -> Self {
         let block_builder = BlockBuilder::new(&BlockBuilderConfig {
             sequence_encoding: S::ENCODING_TAG,
-            quality_encoding,
+            quality_encoding: Q::ENCODING_TAG,
             name_encoding,
             record_key_width: None,
             record_key_tag: None,
             target_records: target_block_records,
             sequence_encode_fn: S::encode,
+            quality_encode_fn: Q::encode,
         });
 
         Self {
             inner,
-            quality_encoding,
             name_encoding,
             target_block_records,
             block_builder,
             header_written: false,
             _codec: PhantomData,
+            _quality: PhantomData,
             _key: PhantomData,
         }
     }
 }
 
-impl<W, S: SequenceCodec, K: RecordKey> DryIceWriter<W, S, K> {
-    fn new_keyed(
-        inner: W,
-        quality_encoding: QualityEncoding,
-        name_encoding: NameEncoding,
-        target_block_records: usize,
-    ) -> Self {
+impl<W, S: SequenceCodec, Q: QualityCodec, K: RecordKey> DryIceWriter<W, S, Q, K> {
+    fn new_keyed(inner: W, name_encoding: NameEncoding, target_block_records: usize) -> Self {
         let block_builder = BlockBuilder::new(&BlockBuilderConfig {
             sequence_encoding: S::ENCODING_TAG,
-            quality_encoding,
+            quality_encoding: Q::ENCODING_TAG,
             name_encoding,
             record_key_width: Some(K::WIDTH),
             record_key_tag: Some(K::TYPE_TAG),
             target_records: target_block_records,
             sequence_encode_fn: S::encode,
+            quality_encode_fn: Q::encode,
         });
 
         Self {
             inner,
-            quality_encoding,
             name_encoding,
             target_block_records,
             block_builder,
             header_written: false,
             _codec: PhantomData,
+            _quality: PhantomData,
             _key: PhantomData,
         }
     }
 }
 
-impl<W, S, K> DryIceWriter<W, S, K> {
+impl<W, S, Q, K> DryIceWriter<W, S, Q, K> {
     fn ensure_header_written(&mut self) -> Result<(), DryIceError>
     where
         W: Write,
@@ -247,7 +255,7 @@ impl<W, S, K> DryIceWriter<W, S, K> {
     }
 }
 
-impl<W: Write, S: SequenceCodec> DryIceWriter<W, S, NoRecordKey> {
+impl<W: Write, S: SequenceCodec, Q: QualityCodec> DryIceWriter<W, S, Q, NoRecordKey> {
     /// Create an unkeyed writer from a pre-built options struct.
     ///
     /// # Errors
@@ -265,7 +273,6 @@ impl<W: Write, S: SequenceCodec> DryIceWriter<W, S, NoRecordKey> {
 
         Ok(Self::new_unkeyed(
             inner,
-            options.encoding.quality,
             options.encoding.names,
             target_block_records,
         ))
@@ -277,7 +284,7 @@ impl<W: Write, S: SequenceCodec> DryIceWriter<W, S, NoRecordKey> {
         DryIceWriterOptions {
             encoding: EncodingOptions {
                 sequence: S::ENCODING_TAG,
-                quality: self.quality_encoding,
+                quality: Q::ENCODING_TAG,
                 names: self.name_encoding,
             },
             layout: BlockLayoutOptions {
@@ -304,7 +311,7 @@ impl<W: Write, S: SequenceCodec> DryIceWriter<W, S, NoRecordKey> {
     }
 }
 
-impl<W: Write, S: SequenceCodec, K: RecordKey> DryIceWriter<W, S, K> {
+impl<W: Write, S: SequenceCodec, Q: QualityCodec, K: RecordKey> DryIceWriter<W, S, Q, K> {
     /// Write a single sequencing record together with its accelerator key.
     ///
     /// # Errors
@@ -328,7 +335,7 @@ impl<W: Write, S: SequenceCodec, K: RecordKey> DryIceWriter<W, S, K> {
     }
 }
 
-impl<W: Write, S, K> DryIceWriter<W, S, K> {
+impl<W: Write, S, Q, K> DryIceWriter<W, S, Q, K> {
     /// Flush any remaining buffered records and finalize the file.
     ///
     /// # Errors

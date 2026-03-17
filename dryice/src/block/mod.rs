@@ -12,6 +12,7 @@ mod builder;
 mod decoder;
 pub(crate) mod header;
 mod index;
+pub mod quality;
 pub mod sequence;
 
 pub(crate) use builder::{BlockBuilder, BlockBuilderConfig};

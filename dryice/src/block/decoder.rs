@@ -6,7 +6,10 @@ use crate::{
     error::DryIceError,
 };
 
-use super::{index::RecordIndexEntry, sequence::decode_by_tag};
+use super::{
+    index::RecordIndexEntry, quality::decode_by_tag as decode_quality_by_tag,
+    sequence::decode_by_tag as decode_sequence_by_tag,
+};
 
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
 const INDEX_ENTRY_SIZE: usize = 24;
@@ -28,6 +31,7 @@ pub(crate) struct BlockDecoder {
     cursor: usize,
     started: bool,
     decoded_sequence_buf: Vec<u8>,
+    decoded_quality_buf: Vec<u8>,
 }
 
 fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
@@ -107,6 +111,7 @@ impl BlockDecoder {
             cursor: 0,
             started: false,
             decoded_sequence_buf: Vec::new(),
+            decoded_quality_buf: Vec::new(),
         })
     }
 
@@ -129,6 +134,10 @@ impl BlockDecoder {
             self.decode_current_sequence()?;
         }
 
+        if self.header.quality_encoding != QualityEncoding::Raw {
+            self.decode_current_quality()?;
+        }
+
         Ok(true)
     }
 
@@ -141,7 +150,24 @@ impl BlockDecoder {
         let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
 
         self.decoded_sequence_buf =
-            decode_by_tag(self.header.sequence_encoding, encoded, original_len)?;
+            decode_sequence_by_tag(self.header.sequence_encoding, encoded, original_len)?;
+        Ok(())
+    }
+
+    fn decode_current_quality(&mut self) -> Result<(), DryIceError> {
+        let entry = &self.index[self.cursor];
+        if let Some(quals) = &self.quality_bytes {
+            let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+            let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+            let encoded = &quals[start..start + len];
+
+            let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+
+            self.decoded_quality_buf =
+                decode_quality_by_tag(self.header.quality_encoding, encoded, original_len)?;
+        } else {
+            self.decoded_quality_buf.clear();
+        }
         Ok(())
     }
 
@@ -175,13 +201,17 @@ impl BlockDecoder {
 
     /// The current record's quality.
     pub fn current_quality(&self) -> &[u8] {
-        let entry = &self.index[self.cursor];
-        if let Some(quals) = &self.quality_bytes {
-            let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
-            let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
-            &quals[start..start + len]
+        if self.header.quality_encoding == QualityEncoding::Raw {
+            let entry = &self.index[self.cursor];
+            if let Some(quals) = &self.quality_bytes {
+                let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+                let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+                &quals[start..start + len]
+            } else {
+                &[]
+            }
         } else {
-            &[]
+            &self.decoded_quality_buf
         }
     }
 

@@ -415,7 +415,9 @@ fn from_options_rejects_target_bytes() {
     };
 
     let buf = Vec::new();
-    let result = DryIceWriter::<_, dryice::RawAsciiCodec, _>::from_options(buf, &options);
+    let result = DryIceWriter::<_, dryice::RawAsciiCodec, dryice::RawQualityCodec, _>::from_options(
+        buf, &options,
+    );
     assert!(
         result.is_err(),
         "from_options should reject TargetBytes block size policy"
@@ -536,4 +538,100 @@ fn two_bit_exact_round_trip_long_sequence_with_sparse_ambiguity() {
     let records = vec![SeqRecord::new(b"long".to_vec(), seq, qual).expect("valid record")];
     let read_back = round_trip_two_bit_exact(&records, 100);
     assert_records_equal(&records, &read_back);
+}
+
+#[test]
+fn binned_quality_round_trip() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"IIII".to_vec()).expect("valid record"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .binned_quality()
+        .build();
+
+    for record in &records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::new(buf.as_slice()).expect("reader should open");
+    let mut read_back = Vec::new();
+    while reader.next_record().expect("next_record should succeed") {
+        read_back.push(
+            reader
+                .to_seq_record()
+                .expect("to_seq_record should succeed"),
+        );
+    }
+
+    assert_eq!(read_back.len(), records.len());
+    for (original, decoded) in records.iter().zip(read_back.iter()) {
+        assert_eq!(original.name(), decoded.name());
+        assert_eq!(original.sequence(), decoded.sequence());
+        assert_eq!(
+            original.quality().len(),
+            decoded.quality().len(),
+            "binned quality should preserve length"
+        );
+    }
+}
+
+#[test]
+fn binned_quality_is_lossy() {
+    let qual_in = vec![33 + 5, 33 + 15, 33 + 25, 33 + 35];
+    let records = [
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), qual_in.clone()).expect("valid record"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .binned_quality()
+        .build();
+
+    writer
+        .write_record(&records[0])
+        .expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::new(buf.as_slice()).expect("reader should open");
+    assert!(reader.next_record().expect("next_record should succeed"));
+
+    let decoded_qual = reader.quality();
+    assert_ne!(
+        decoded_qual,
+        qual_in.as_slice(),
+        "binned quality should differ from original"
+    );
+    assert_eq!(decoded_qual.len(), qual_in.len());
+}
+
+#[test]
+fn two_bit_exact_with_binned_quality_round_trip() {
+    let records = [
+        SeqRecord::new(b"r1".to_vec(), b"ACNGT".to_vec(), b"!!!!!".to_vec()).expect("valid record"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .two_bit_exact()
+        .binned_quality()
+        .build();
+
+    writer
+        .write_record(&records[0])
+        .expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::new(buf.as_slice()).expect("reader should open");
+    assert!(reader.next_record().expect("next_record should succeed"));
+
+    assert_eq!(reader.name(), b"r1");
+    assert_eq!(reader.sequence(), b"ACNGT");
+    assert_eq!(reader.quality().len(), 5);
 }

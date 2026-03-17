@@ -35,6 +35,7 @@
 !/dryice/src/block/decoder.rs
 !/dryice/src/block/header.rs
 !/dryice/src/block/index.rs
+!/dryice/src/block/quality.rs
 !/dryice/src/block/sequence.rs
 !/dryice/src/config.rs
 !/dryice/src/format.rs

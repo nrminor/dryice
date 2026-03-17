@@ -27,6 +27,7 @@ pub(crate) struct BlockBuilderConfig {
     pub record_key_tag: Option<[u8; 16]>,
     pub target_records: usize,
     pub sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
+    pub quality_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 /// Accumulates records into a single block's worth of data.
@@ -43,6 +44,7 @@ pub(crate) struct BlockBuilder {
     record_key_tag: [u8; 16],
     target_records: usize,
     sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
+    quality_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 impl BlockBuilder {
@@ -61,6 +63,7 @@ impl BlockBuilder {
             record_key_tag: config.record_key_tag.unwrap_or([0; 16]),
             target_records: config.target_records,
             sequence_encode_fn: config.sequence_encode_fn,
+            quality_encode_fn: config.quality_encode_fn,
         }
     }
 
@@ -108,15 +111,16 @@ impl BlockBuilder {
         let sequence_offset = to_u32(self.sequence_bytes.len(), "sequence section offset")?;
         let quality_offset = to_u32(self.quality_bytes.len(), "quality section offset")?;
         let name_len = to_u32(name.len(), "name length")?;
-        let quality_len = to_u32(quality.len(), "quality length")?;
 
         self.name_bytes.extend_from_slice(name);
 
-        let encoded = (self.sequence_encode_fn)(raw_sequence)?;
-        let encoded_sequence_len = to_u32(encoded.len(), "encoded sequence length")?;
-        self.sequence_bytes.extend_from_slice(&encoded);
+        let encoded_seq = (self.sequence_encode_fn)(raw_sequence)?;
+        let encoded_sequence_len = to_u32(encoded_seq.len(), "encoded sequence length")?;
+        self.sequence_bytes.extend_from_slice(&encoded_seq);
 
-        self.quality_bytes.extend_from_slice(quality);
+        let encoded_qual = (self.quality_encode_fn)(quality)?;
+        let encoded_quality_len = to_u32(encoded_qual.len(), "encoded quality length")?;
+        self.quality_bytes.extend_from_slice(&encoded_qual);
 
         self.index.push(RecordIndexEntry {
             name_offset,
@@ -124,7 +128,7 @@ impl BlockBuilder {
             sequence_offset,
             sequence_len: encoded_sequence_len,
             quality_offset,
-            quality_len,
+            quality_len: encoded_quality_len,
         });
 
         Ok(())
