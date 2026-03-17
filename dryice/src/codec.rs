@@ -5,10 +5,11 @@
 //! are internal to the crate.
 
 /// Sequence encoding strategy for a block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SequenceEncoding {
     /// Store sequences as raw ASCII bytes. Fastest encode/decode,
     /// largest on-disk footprint.
+    #[default]
     RawAscii,
 
     /// Pack canonical bases (A, C, G, T) into 2 bits each with an
@@ -21,9 +22,10 @@ pub enum SequenceEncoding {
 }
 
 /// Quality score encoding strategy for a block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QualityEncoding {
     /// Store quality scores as raw ASCII bytes.
+    #[default]
     Raw,
 
     /// Bin quality scores into a smaller set of representative values.
@@ -35,9 +37,10 @@ pub enum QualityEncoding {
 }
 
 /// Name encoding strategy for a block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameEncoding {
     /// Store names as raw bytes.
+    #[default]
     Raw,
 
     /// Omit names entirely for this block.

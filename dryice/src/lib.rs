@@ -12,11 +12,16 @@
 //! # Writing records
 //!
 //! ```no_run
-//! use dryice::{DryIceWriter, SeqRecordLike};
+//! use dryice::{DryIceWriter, SequenceEncoding, QualityEncoding};
 //!
 //! # fn example() -> Result<(), dryice::DryIceError> {
 //! let file = std::fs::File::create("reads.dryice")?;
-//! let mut writer = DryIceWriter::new(file)?;
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(file)
+//!     .sequence_encoding(SequenceEncoding::TwoBitExact)
+//!     .quality_encoding(QualityEncoding::Binned)
+//!     .target_block_records(4096)
+//!     .build()?;
 //!
 //! // writer.write_record(&my_record)?;
 //! // writer.finish()?;
@@ -42,11 +47,13 @@
 //! ```
 
 pub mod codec;
+pub mod config;
 mod error;
 mod io;
 mod record;
 
 pub use codec::{BlockSizePolicy, NameEncoding, QualityEncoding, SequenceEncoding, SortKeyKind};
+pub use config::{BlockLayoutOptions, DryIceWriterOptions, EncodingOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter};
 pub use record::{SeqRecord, SeqRecordExt, SeqRecordLike};
