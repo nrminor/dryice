@@ -2,13 +2,13 @@
 
 ## Purpose of this document
 
-This document consolidates the current stable conclusions from the earlier planning artifacts into one implementation-oriented plan.
+This document consolidates the current stable conclusions from the earlier planning artifacts and the implementation work done so far into one implementation-oriented plan.
 
 It is not meant to replace the earlier documents. It is meant to answer a narrower question:
 
 ```text
-Given what we now know,
-what should we build first,
+Given what we now know and what we have built,
+what should we build next,
 in what order,
 and with what constraints in mind?
 ```
@@ -31,494 +31,203 @@ Its purpose is to make it cheap to move large collections of sequencing records 
 - a generic genomics transformation layer
 - a parser-coupled library bound to one Rust bioinformatics ecosystem
 
-## Design commitments that now feel stable
+## What has been built so far
 
-The following points are stable enough to plan implementation around.
+The following phases are complete.
 
-### Product / format level
+### Phase 1: repo and crate skeleton (done)
 
-- The file format is block-oriented.
-- Records are read-like and row-oriented at the user boundary.
-- Names, sequences, and qualities are stored in separate payload streams.
-- Each block has a fixed per-record index section.
-- Optional accelerator sections are part of the design, but the public API should begin with concrete built-ins rather than generic user-defined extensions.
-- Sequence encodings should include at least `RawAscii`, `TwoBitExact`, and likely a lossy `TwoBitLossyN` mode later.
-- Quality encodings should begin simply, with `Raw` and `Binned` as the first meaningful choices.
+- workspace root with resolver 3, shared lints, and shared profiles
+- single `dryice` library crate with `thiserror` and `bon` as dependencies, `proptest` as a dev dependency
+- `justfile` with the standard check/fmt/lint/test/doc workflow
+- deny-by-default `.gitignore`
+- `AGENTS.md` philosophical primer
+- CI via GitHub Actions running `just check`
 
-### Rust API level
+### Phase 2: public surface skeleton (done)
 
-- The write-side public boundary should be trait-based via `SeqRecordLike`.
-- The read-side public boundary should be iterator-based and yield a crate-provided row-wise `SeqRecord` type.
-- Per-record dynamic dispatch is unacceptable in hot paths.
-- The core crate should remain parser-agnostic.
-- The public API should expose project-owned types, not types from external bioinformatics libraries.
-- The internal ownership center is block assembly / decode state, not a reusable internal per-record hierarchy.
+- `SeqRecordLike` trait with `name()`, `sequence()`, `quality()`, `len()`, `is_empty()` default methods
+- `SeqRecordExt` blanket extension trait providing `to_seq_record()`
+- `SeqRecord` owned row-wise record type with private fields, invariant-preserving constructors, and accessors
+- `DryIceError` with categorized error variants
+- public encoding/config enums: `SequenceEncoding`, `QualityEncoding`, `NameEncoding`, `BlockSizePolicy`, `SortKeyKind`
 
-### Repository / project structure level
+### Phase 3: config/builder layer (done)
 
-- The repo should be reshaped into one real core crate named `dryice` inside a workspace root.
-- The old `libdryice`, `dryice` binary stub, and `dryice-macros` structure should be retired.
-- The workspace root should be ready for future bindings crates.
-- The workflow should be driven by `just`, workspace linting, and explicit tooling.
+- `DryIceWriterOptions` with grouped sub-structs `EncodingOptions` and `BlockLayoutOptions`
+- `bon`-derived flat builder on `DryIceWriter` using function-level `#[bon::builder]`
+- `Default` impls on codec enums for clean config defaults
+- `from_options()` escape hatch that rejects unsupported `TargetBytes` policy
+
+### Phase 4: block schema and internal machinery (done)
+
+- private `BlockHeader` with inlined layout ranges
+- `ByteRange { offset, len }` for section locations
+- `RecordIndexEntry` with fixed 6-field schema (6 × u32 = 24 bytes)
+- `BlockBuilder` that accumulates records into block-local buffers
+- `BlockDecoder` that holds block-owned bytes and exposes the current record as borrowed slices
+
+### Phase 5: first end-to-end raw round-trip (done)
+
+- file header: 8 bytes (`DRYI` magic + major/minor version as little-endian u16)
+- block header: 88 bytes (record count, encoding tags, 5 section ranges)
+- all integer fields little-endian throughout the format
+- writer emits real file header and serializes blocks with index entries and raw payload sections
+- reader parses file header, loads blocks, and exposes the current record via `SeqRecordLike`
+- zero-copy primary read path via `next_record()` — no per-record heap allocation
+- convenience `into_records()` iterator for users who prefer `for`-loop syntax
+- zero-copy reader-to-writer piping: `writer.write_record(&reader)` works because `DryIceReader` implements `SeqRecordLike`
+
+### CI (done)
+
+- GitHub Actions workflow running `just check` on push and PR
+
+## Design commitments that are now proven in code
+
+These are no longer just planning-stage conclusions. They are implemented and tested.
+
+### Record model
+
+- `SeqRecordLike` is the universal record interface, used on both write and read sides
+- `SeqRecord` is the owned row-wise output type, used only when ownership is actually needed
+- `DryIceReader` itself implements `SeqRecordLike` for the current record — this is the zero-copy path
+- one trait, one owned type, no separate borrowed record struct
+
+### Reader access patterns
+
+The reader provides two access patterns:
+
+```rust
+// zero-copy primary path
+while reader.next_record()? {
+    let seq = reader.sequence();
+    writer.write_record(&reader)?;
+}
+
+// convenience iterator (allocates per record)
+for record in reader.into_records() {
+    let record = record?;
+}
+```
+
+### Writer builder
+
+The writer uses `bon`'s function-level builder to ensure the `BlockBuilder` is constructed with the user's actual encoding choices:
+
+```rust
+let writer = DryIceWriter::builder()
+    .inner(file)
+    .sequence_encoding(SequenceEncoding::TwoBitExact)
+    .quality_encoding(QualityEncoding::Binned)
+    .target_block_records(4096)
+    .build();
+```
+
+### Binary format
+
+```text
+file header (8 bytes)
+[4 bytes] magic: DRYI
+[2 bytes] version_major: u16 le
+[2 bytes] version_minor: u16 le
+
+block header (88 bytes)
+[4 bytes]  record_count        u32 le
+[1 byte]   sequence_encoding   u8
+[1 byte]   quality_encoding    u8
+[1 byte]   name_encoding       u8
+[1 byte]   sort_key_kind       u8
+[16 bytes] index range         offset u64 le + len u64 le
+[16 bytes] names range         offset u64 le + len u64 le
+[16 bytes] sequences range     offset u64 le + len u64 le
+[16 bytes] qualities range     offset u64 le + len u64 le
+[16 bytes] sort_keys range     offset u64 le + len u64 le
+
+record index entry (24 bytes)
+[4 bytes] name_offset     u32 le
+[4 bytes] name_len        u32 le
+[4 bytes] sequence_offset u32 le
+[4 bytes] sequence_len    u32 le
+[4 bytes] quality_offset  u32 le
+[4 bytes] quality_len     u32 le
+```
+
+### Test coverage
+
+The test suite includes:
+
+- format-level unit tests for file header and block header round-trips
+- integration tests covering both zero-copy and iterator access patterns
+- single-record, multi-record, multi-block, empty-file, empty-name, long-sequence, and block-boundary-exact cases
+- error-path tests for mismatched lengths, bad magic, truncated headers, and unsupported config
+- property-based fuzz testing with proptest for arbitrary record round-trip fidelity
+- zero-copy reader-to-writer piping test
 
 ## What still remains open
 
 These questions are still active, but they are now localized rather than pervasive.
 
-- the exact convenience surface of `SeqRecord`
-- the exact field set in private `BlockHeader`
-- the exact binary expression of block header and index structures
-- the exact builder implementation details and where typestate is justified
-- the first reader-options surface, if any beyond `DryIceReader::new(...)`
-- the exact first built-in sort-key/accelerator choices
-- exact dependency choices beyond a few obvious ones like `thiserror`
+- exact `TwoBitExact` sequence encoding implementation
+- exact `Binned` quality encoding implementation
+- exact sort-key accelerator implementation and API
+- whether `CorruptBlockLayout { message: String }` error variants should use `&'static str` instead
+- whether repeated `u32::try_from` patterns in the builder should be factored into helpers
+- whether the `BlockBuilder::new` 5-argument constructor should take a config struct instead
+- exact `SeqRecord` convenience surface beyond the current constructor/accessor API
+- reader-options surface, if any beyond `DryIceReader::new(...)`
 
-These are refinement questions, not existential questions.
+## Next implementation priorities
 
-## Core API plan
+### Phase 6: code quality pass
 
-### Write-side boundary
+Before adding new features, address the issues identified during review:
 
-The core write-side user model should be:
+- factor repeated `u32::try_from(...).map_err(...)` patterns into a helper
+- consider replacing `String` payloads in error variants with `&'static str` where the messages are compile-time-known
+- consider reducing `BlockBuilder::new` argument count
+- remove any remaining `#[allow(dead_code)]` annotations that are no longer justified
+- verify all `as usize` / `as u64` casts are safe or replace with `try_from`
 
-```rust
-pub trait SeqRecordLike {
-    fn name(&self) -> &[u8];
-    fn sequence(&self) -> &[u8];
-    fn quality(&self) -> &[u8];
+### Phase 7: `TwoBitExact` sequence encoding
 
-    fn len(&self) -> usize {
-        self.sequence().len()
-    }
+This is the first non-trivial codec and the most important compact encoding for the format.
 
-    fn is_empty(&self) -> bool {
-        self.sequence().is_empty()
-    }
-}
-```
-
-And the writer should work conceptually like:
-
-```rust
-pub struct DryIceWriter<W> { ... }
-
-impl<W: std::io::Write> DryIceWriter<W> {
-    pub fn builder(inner: W) -> DryIceWriterBuilder<W>;
-    pub fn write_record<R: SeqRecordLike>(&mut self, record: &R) -> Result<(), DryIceError>;
-    pub fn finish(self) -> Result<W, DryIceError>;
-}
-```
-
-### Read-side boundary
-
-The read-side user model should be row-wise and iterator-shaped.
-
-```rust
-pub struct SeqRecord { ... }
-
-pub struct DryIceReader<R> { ... }
-
-impl<R: std::io::Read> DryIceReader<R> {
-    pub fn new(inner: R) -> Result<Self, DryIceError>;
-    pub fn records(self) -> DryIceRecords<R>;
-}
-```
-
-Target user experience:
-
-```rust
-let reader = DryIceReader::new(file)?;
-for record in reader.records() {
-    let record = record?;
-    // use SeqRecord
-}
-```
-
-### `SeqRecord` direction
-
-`SeqRecord` should be:
-
-- row-wise
-- owned
-- more encapsulated than a bag of public fields
-- constructed through invariant-preserving APIs
-
-Current sketch:
-
-```rust
-pub struct SeqRecord {
-    name: Vec<u8>,
-    sequence: Vec<u8>,
-    quality: Vec<u8>,
-}
-```
-
-Likely methods:
-
-- `new(...) -> Result<Self, DryIceError>`
-- `from_slices(...) -> Result<Self, DryIceError>`
-- `name() -> &[u8]`
-- `sequence() -> &[u8]`
-- `quality() -> &[u8]`
-
-And `SeqRecord` should likely implement `SeqRecordLike`.
-
-## Internal format / block plan
-
-### Conceptual block picture
-
-The architecture of the block layout is mostly settled.
+Conceptual layout:
 
 ```text
-+---------------------------------------------------------------+
-| block header                                                  |
-|---------------------------------------------------------------|
-| record_count                                                  |
-| sequence_encoding                                             |
-| quality_encoding                                              |
-| name_encoding                                                 |
-| sort_key_kind?                                                |
-| checksum_kind?                                                |
-|                                                               |
-| index_range                                                   |
-| names_range?                                                  |
-| sequences_range                                               |
-| qualities_range?                                              |
-| sort_keys_range?                                              |
-+---------------------------------------------------------------+
-| index section                                                 |
-|---------------------------------------------------------------|
-| entry 0                                                       |
-| entry 1                                                       |
-| ...                                                           |
-+---------------------------------------------------------------+
-| names bytes?                                                  |
-+---------------------------------------------------------------+
-| sequence bytes                                                |
-+---------------------------------------------------------------+
-| quality bytes?                                                |
-+---------------------------------------------------------------+
-| sort-key bytes?                                               |
-+---------------------------------------------------------------+
+2-bit canonical stream
++
+ambiguity mask
++
+ambiguity byte stream
 ```
 
-The main remaining work here is exact Rust and binary schema expression, not rethinking the basic layout.
+This will require:
 
-### Private block schema direction
+- encode path in `BlockBuilder`
+- decode path in `BlockDecoder`
+- round-trip tests with sequences containing IUPAC ambiguity codes
+- property-based tests for encoding fidelity
 
-Current likely private/internal shape:
+### Phase 8: `Binned` quality encoding
 
-```rust
-struct BlockHeader {
-    record_count: u32,
-    sequence_encoding: SequenceEncoding,
-    quality_encoding: QualityEncoding,
-    name_encoding: NameEncoding,
-    sort_key_kind: Option<SortKeyKind>,
-    checksum_kind: Option<ChecksumKind>,
+The most promising early lossy transform. Should be cheap enough that it does not undermine throughput.
 
-    index: ByteRange,
-    names: Option<ByteRange>,
-    sequences: ByteRange,
-    qualities: Option<ByteRange>,
-    sort_keys: Option<ByteRange>,
-}
+### Phase 9: concrete sort-key accelerator support
 
-struct ByteRange {
-    offset: u64,
-    len: u64,
-}
+- implement `SortKeyKind::U64Minimizer` and `U128Minimizer` storage
+- wire through writer config, block builder, and block decoder
+- add sort-key round-trip tests
 
-struct RecordIndexEntry {
-    name_offset: u32,
-    name_len: u32,
-    sequence_offset: u32,
-    sequence_len: u32,
-    quality_offset: u32,
-    quality_len: u32,
-}
-```
+### Phase 10: benchmarking
 
-Important current decisions:
+Before claiming "high-throughput," we need measurements.
 
-- `BlockHeader` should own both semantic metadata and layout metadata
-- the layout information should be inlined there rather than split into a separate `BlockLayout` type for now
-- `ByteRange { offset, len }` is preferred over `Range<u64>` for binary-layout clarity
-- the index should remain fixed and explicit initially, even if future optimization opportunities exist
-- omitted sections are communicated by the header, and corresponding index fields are ignored when the section is absent for a block
-
-### Internal ownership model
-
-The implementation should be built around block-owned state.
-
-Write path:
-
-```text
-T: SeqRecordLike
-    -> borrow field slices
-    -> validate / derive optional values
-    -> append into block-owned buffers
-    -> flush encoded block
-```
-
-Read path:
-
-```text
-dryice bytes
-    -> read block
-    -> parse header and index
-    -> extract one record from payload sections
-    -> materialize SeqRecord
-```
-
-The likely internal actors are:
-
-- `BlockBuilder`
-- encoding-specific block-local buffer state
-- `BlockDecoder`
-- parsed `BlockHeader`
-- parsed `RecordIndexEntry` collection
-
-The current plan does **not** require inventing a reusable internal per-record hierarchy before it is justified.
-
-## Codec plan
-
-The public codec/configuration surface should be enum-based, not trait-based.
-
-Likely public enums:
-
-```rust
-pub enum SequenceEncoding {
-    RawAscii,
-    TwoBitExact,
-    TwoBitLossyN,
-}
-
-pub enum QualityEncoding {
-    Raw,
-    Binned,
-    Omitted,
-}
-
-pub enum NameEncoding {
-    Raw,
-    Omitted,
-}
-```
-
-Internal codec implementation machinery can remain flexible and may use traits internally if they buy real simplification.
-
-## Accelerator plan
-
-This is now one of the more important philosophical decisions in the plan.
-
-Current stance:
-
-- public API starts with concrete built-ins
-- internal block model still leaves room for multiple optional accelerator sections
-- generic user-defined accelerators are deferred until there is real evidence for what they should mean
-
-In other words:
-
-```text
-public API now:
-  concrete sort-key-oriented choices
-
-internal design now:
-  room for multiple optional accelerator sections
-
-public API later, if justified:
-  more general extension surface
-```
-
-That is not anti-generic. It is sequencing and semver discipline.
-
-## Configuration and builders plan
-
-### User-facing builder shape
-
-The current preferred user-facing configuration shape is:
-
-- flat builder surface
-- internally grouped config structs
-- sensible defaults
-- concrete built-in choices first
-
-Target writer usage:
-
-```rust
-let writer = DryIceWriter::builder(file).build()?;
-
-let writer = DryIceWriter::builder(file)
-    .sequence_encoding(SequenceEncoding::TwoBitExact)
-    .quality_encoding(QualityEncoding::Binned)
-    .name_encoding(NameEncoding::Raw)
-    .sort_key(SortKeyKind::U128Minimizer)
-    .target_block_records(8192)
-    .build()?;
-```
-
-### Underlying grouped config shape
-
-Likely underlying shape:
-
-```rust
-pub struct DryIceWriterOptions {
-    pub encoding: EncodingOptions,
-    pub layout: BlockLayoutOptions,
-    pub sort_key: Option<SortKeyKind>,
-}
-
-pub struct EncodingOptions {
-    pub sequence: SequenceEncoding,
-    pub quality: QualityEncoding,
-    pub names: NameEncoding,
-}
-
-pub struct BlockLayoutOptions {
-    pub block_size: BlockSizePolicy,
-    pub checksum: Option<ChecksumKind>,
-}
-
-pub enum BlockSizePolicy {
-    TargetRecords(usize),
-    TargetBytes(usize),
-}
-```
-
-### Builder implementation strategy
-
-Current stance:
-
-- `bon` is a strong candidate for public-facing builders with multiple optional fields
-- typestate builders are welcome when they genuinely prevent invalid states and improve UX
-- typestate should not be introduced just to show off the type system
-- plain builders remain appropriate for smaller or purely internal construction paths
-
-Current likely defaults:
-
-- `sequence_encoding = RawAscii`
-- `quality_encoding = Raw`
-- `name_encoding = Raw`
-- `sort_key = None`
-- `block_size = TargetRecords(<sensible default>)`
-- `checksum = None`
-
-### Reader configuration stance
-
-Reader configuration should start much thinner than writer configuration.
-
-Current bias:
-
-- default path should be `DryIceReader::new(inner)`
-- optional reader builder/config should only appear if operational tuning knobs become justified
-- reader configuration should mostly be operational, not semantic, because the file largely describes how it must be interpreted
-
-## Error model plan
-
-The current direction is a single top-level `DryIceError` using ordinary `thiserror` patterns.
-
-The important family shape is:
-
-- transport/runtime errors
-- configuration errors
-- input-record validity errors
-- file identity/version errors
-- structural corruption errors
-- unsupported feature/encoding errors
-- integrity/decode failures
-
-Current principles:
-
-- one top-level `DryIceError` is the right starting point
-- configuration errors may grow typed sub-errors later
-- corruption and unsupported-feature cases should remain distinct
-- some string payloads are acceptable early, but the taxonomy should still be meaningful
-
-## Repository restructuring plan
-
-The next repository reshape should aim for:
-
-```text
-workspace root
-+- Cargo.toml
-+- Cargo.lock
-+- justfile
-+- .gitignore
-+- README.md
-+- rustfmt.toml
-+- AGENTS.md
-+- .agents/
-+- dryice/
-   +- Cargo.toml
-   +- src/
-```
-
-And explicitly remove or retire:
-
-- the current `dryice` binary-stub crate shape
-- `libdryice`
-- `dryice-macros`
-
-The first module tree should stay modest and concept-oriented, something like:
-
-```text
-src/
-+- lib.rs
-+- error.rs
-+- record.rs
-+- format/
-+- block/
-+- codec/
-+- io/
-+- accelerator/
-```
-
-## Immediate implementation priorities
-
-Once the repo is restructured, the first implementation work should probably proceed in this order.
-
-### Phase 1: repo and crate skeleton
-
-- rewrite the workspace root manifest
-- create the single real `dryice` crate
-- add `AGENTS.md`, `justfile`, and initial root `.gitignore`
-- create the initial module tree
-- add crate-level docs and minimal public re-exports
-
-### Phase 2: public surface skeleton
-
-- define `DryIceError`
-- define `SeqRecordLike`
-- define initial `SeqRecord`
-- define the public encoding/config enums
-- sketch `DryIceWriter<W>` and `DryIceReader<R>` APIs without full implementation
-
-### Phase 3: config/builder layer
-
-- define `DryIceWriterOptions` and grouped config structs
-- add builder story, likely with `bon`
-- settle whether any typestate builder is actually justified
-
-### Phase 4: block schema and internal machinery skeleton
-
-- define private `BlockHeader`
-- define `ByteRange`
-- define `RecordIndexEntry`
-- define `BlockBuilder` and `BlockDecoder` skeletons
-- wire writer/reader internals around block-centered state
-
-### Phase 5: first end-to-end path
-
-- support a simple writer path using `SequenceEncoding::RawAscii`, `QualityEncoding::Raw`, and `NameEncoding::Raw`
-- support matching read path back into `SeqRecord`
-- get a minimal format round-trip working before more sophisticated encodings
-
-### Phase 6: richer encodings and accelerators
-
-- add `TwoBitExact`
-- add `Binned` qualities
-- add concrete built-in sort-key support if justified by the first integration work
+- establish a benchmark harness (likely `criterion`)
+- measure write throughput for raw and compact encodings
+- measure read throughput for zero-copy and iterator paths
+- measure round-trip throughput end-to-end
+- compare against raw FASTQ read/write as a baseline
 
 ## What should not happen next
 
@@ -526,32 +235,26 @@ The following would be premature right now:
 
 - designing a public plugin system for accelerators
 - coupling the core crate to `noodles` or any other parser ecosystem
-- designing the Python/Node wrappers before the Rust API skeleton exists
+- designing the Python/Node wrappers before the core encodings are stable
 - introducing a macros crate without a concrete need
 - building a CLI just because a workspace can contain one
 - over-optimizing index schema variations before there is data showing they matter
 
 ## Current readiness assessment
 
-At this point, the project is not ready to hand entirely to implementation agents with no supervision, but it is ready for disciplined scaffolding and early core-type work.
+The project is past the scaffolding stage. The core architecture is implemented and tested with a working raw-mode round-trip. The zero-copy reader design is in place and proven.
 
 Roughly:
 
 - project identity and scope: strong
-- public API philosophy: strong
-- core Rust abstraction model: strong enough to scaffold
-- internal block/header/index picture: strong enough to scaffold
-- implementation plan: now actionable in early phases
+- public API philosophy: strong and implemented
+- core Rust abstraction model: implemented and tested
+- binary format: defined and serializing
+- raw-mode round-trip: working
+- compact encodings: not yet implemented
+- accelerator support: not yet implemented
+- benchmarking: not yet started
 
 ## Immediate next step
 
-The best next move after this plan is to perform the repository restructuring.
-
-That means:
-
-- collapse to one real core crate
-- install the root workflow/tooling files
-- create the initial module skeleton
-- then start implementing the public surface in the order described above
-
-That should let the project move from design-heavy planning into design-guided construction without losing the care and discipline that got it here.
+The best next move is the code quality pass (phase 6), followed by `TwoBitExact` encoding (phase 7). The code quality pass is small but will make the codebase cleaner before we add encoding complexity.
