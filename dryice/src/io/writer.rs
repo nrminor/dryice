@@ -201,6 +201,28 @@ impl<W: Write, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
     }
 }
 
+#[cfg(feature = "async")]
+impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec>
+    DryIceWriterBuilder<W, S, Q, N, NoRecordKey>
+{
+    /// Build an unkeyed async writer.
+    #[must_use]
+    pub fn build_async(self) -> crate::async_io::AsyncDryIceWriter<W, S, Q, N, NoRecordKey> {
+        crate::async_io::AsyncDryIceWriter::new_unkeyed(self.inner, self.target_block_records)
+    }
+}
+
+#[cfg(feature = "async")]
+impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
+    DryIceWriterBuilder<W, S, Q, N, K>
+{
+    /// Build a keyed async writer.
+    #[must_use]
+    pub fn build_async(self) -> crate::async_io::AsyncDryIceWriter<W, S, Q, N, K> {
+        crate::async_io::AsyncDryIceWriter::new_keyed(self.inner, self.target_block_records)
+    }
+}
+
 /// Writes sequencing records into the `dryice` block-oriented format.
 pub struct DryIceWriter<
     W,

@@ -147,6 +147,8 @@ let writer = DryIceWriter::builder()
 
 All codec and key traits are public, so users can implement their own encodings and key types. The type system ensures that readers and writers always have a real codec implementation behind them, and codec mismatches between writer and reader are caught at block-load time with clear error messages.
 
+An `async` feature flag enables `AsyncDryIceWriter` and `AsyncDryIceReader` types that work with `tokio::io::AsyncRead` / `AsyncWrite`. Block building and codec encoding remain synchronous; only the I/O operations are async. The same builder produces sync or async writers via `build()` or `build_async()`.
+
 ### Built-in Codecs
 
 DryIce ships with built-in codecs for all three record fields, plus built-in record key types. Users can also implement their own by implementing the `SequenceCodec`, `QualityCodec`, `NameCodec`, or `RecordKey` traits.

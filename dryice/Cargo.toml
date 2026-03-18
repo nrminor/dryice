@@ -8,7 +8,12 @@ description = "High-throughput transient container for read-like genomic records
 
 [dependencies]
 bitnuc = "0.4.1"
+futures-core = { version = "0.3.32", optional = true }
 thiserror = "2"
+tokio = { version = "1.50.0", features = ["io-util"], optional = true }
+
+[features]
+async = ["dep:tokio", "dep:futures-core"]
 
 [lints]
 workspace = true
@@ -17,3 +22,4 @@ workspace = true
 bio = "3.0.0"
 noodles-fastq = "0.22.0"
 proptest = "1.10.0"
+tokio = { version = "1.50.0", features = ["rt", "macros"] }

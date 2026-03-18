@@ -12,16 +12,16 @@ use crate::{
 };
 
 /// Magic bytes at the start of every `dryice` file.
-const MAGIC: [u8; 4] = *b"DRYI";
+pub(crate) const MAGIC: [u8; 4] = *b"DRYI";
 
 /// Current major version of the format.
-const VERSION_MAJOR: u16 = 1;
+pub(crate) const VERSION_MAJOR: u16 = 1;
 
 /// Current minor version of the format.
-const VERSION_MINOR: u16 = 0;
+pub(crate) const VERSION_MINOR: u16 = 0;
 
 /// Total size of the file header in bytes.
-const FILE_HEADER_SIZE: usize = 8;
+pub(crate) const FILE_HEADER_SIZE: usize = 8;
 
 /// Total size of a block header in bytes.
 ///
@@ -41,7 +41,7 @@ const FILE_HEADER_SIZE: usize = 8;
 /// [16 bytes] qualities range       offset u64 le + len u64 le
 /// [16 bytes] record_keys range     offset u64 le + len u64 le
 /// ```
-const BLOCK_HEADER_SIZE: usize = 152;
+pub(crate) const BLOCK_HEADER_SIZE: usize = 152;
 
 /// Write the file header to the given writer.
 pub(crate) fn write_file_header<W: Write>(writer: &mut W) -> Result<(), DryIceError> {

@@ -228,6 +228,29 @@ All fallible operations return `Result<T, DryIceError>`. Key error variants:
 - `DryIceError::RecordKeyTypeMismatch` — reader opened with wrong key type
 - `DryIceError::CorruptBlockHeader` / `CorruptBlockLayout` / `CorruptRecordIndex` — format corruption
 
+## Async I/O (feature-gated)
+
+Enable with `dryice = { features = ["async"] }`. Provides `AsyncDryIceWriter` and `AsyncDryIceReader` using tokio's `AsyncRead`/`AsyncWrite`.
+
+```rust
+// Build an async writer from the same builder
+let mut writer = DryIceWriter::builder()
+    .inner(async_file)
+    .two_bit_exact()
+    .build_async();
+
+writer.write_record(&record).await?;
+writer.finish().await?;
+
+// Async reader
+let mut reader = AsyncDryIceReader::new(async_file).await?;
+while reader.next_record().await? {
+    let seq = reader.sequence(); // zero-copy, same as sync
+}
+```
+
+Block building and codec encoding are synchronous. Only I/O is async.
+
 ## Common patterns
 
 **External merge sort:** Write sorted runs with record keys, then merge using a min-heap that compares only keys. See `examples/external_merge_sort.rs`.

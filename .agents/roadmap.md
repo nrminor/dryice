@@ -152,19 +152,11 @@ The current codec set covers the most important cases, but there may be value in
 
 ## Infrastructure
 
-### Async I/O support
+### Async I/O support — implemented
 
-`tokio::io::AsyncRead` and `AsyncWrite` variants of the reader and writer would matter for cloud-backed or networked storage scenarios. The core block-oriented architecture should make this relatively clean since blocks are natural units of async I/O. This should be gated behind a cargo feature (e.g., `async`) so that users who don't need async don't pay for the `tokio` dependency.
+`AsyncDryIceWriter` and `AsyncDryIceReader` are available behind the `async` feature flag, using `tokio::io::AsyncRead` / `AsyncWrite` for block I/O. Block building and codec encoding remain synchronous; only the I/O operations are async. The same builder produces sync or async writers via `build()` or `build_async()`. The async reader implements `SeqRecordLike` for zero-copy access matching the sync pattern. Re-exports `futures_core::Stream` for downstream use.
 
-Design considerations: the core types (`BlockBuilder`, `BlockDecoder`, `DryIceWriter`, `DryIceReader`) are likely already `Send` since they hold owned buffers and use static dispatch (no function pointers), but this has not been formally verified. The zero-copy reader pattern (where the reader implements `SeqRecordLike` for the current record via borrowed slices) may create friction with async borrowing, since references to `reader.sequence()` live until the next `next_record()` call. Before starting async work, we should add `static_assertions` for `Send` and `Sync` on the core types to catch regressions early.
-
-### Streaming support
-
-The block-oriented architecture is a natural fit for streaming. Blocks are self-contained units that can be produced, transmitted, and consumed independently, which means a streaming API could let users write blocks to a channel, socket, or pipe as they fill up and read blocks from a stream as they arrive, yielding records before the full file is available.
-
-This pairs naturally with async I/O and would generalize the spill/reload pattern beyond files to inter-process communication, network transfer, and pipeline stages connected by channels. A streaming reader could implement something like `futures::Stream<Item = Result<SeqRecord, DryIceError>>` or expose a block-at-a-time async iterator.
-
-The main design questions are around backpressure (what happens when the consumer is slower than the producer), partial block handling (what if the stream closes mid-block), and whether the streaming API should be a separate type or a mode on the existing reader/writer. This should be designed alongside async I/O rather than independently.
+Remaining async work: `static_assertions` for `Send`/`Sync` on core types, and a `Stream`-based convenience API (currently deferred — users can wrap `next_record().await` with `futures::stream::unfold` if needed).
 
 ### Memory-mapped reading
 

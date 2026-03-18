@@ -218,6 +218,8 @@
 //! }
 //! ```
 
+#[cfg(feature = "async")]
+pub mod async_io;
 mod block;
 pub mod config;
 mod error;
@@ -226,6 +228,8 @@ mod io;
 pub mod key;
 mod record;
 
+#[cfg(feature = "async")]
+pub use async_io::{AsyncDryIceReader, AsyncDryIceWriter};
 pub use block::{
     name::{NameCodec, OmittedNameCodec, RawNameCodec, SplitNameCodec},
     quality::{BinnedQualityCodec, OmittedQualityCodec, QualityCodec, RawQualityCodec},
