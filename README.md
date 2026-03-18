@@ -7,12 +7,12 @@
 
 ## Overview
 
-DryIce is a disk storage engine and file format optimized for genomic data. Its purpose is to leverage extremely fast movement of sequence data on and off of disk to make larger-than-memory workloads more tractable. Want to do parallel comparisons between kmer hashes across cores? Want to do disk-spilling global sequence sorting? Want to cheaply scan for sequence matches across partitioned reads? DryIce is meant for these and more use cases.
+DryIce is a disk storage engine and file format optimized for temporary genomic data. Its purpose is to leverage extremely fast movement of sequence data on and off of disk to make larger-than-memory workloads more tractable. Want to do parallel comparisons between kmer hashes across cores? Want to do disk-spilling global sequence sorting? Want to cheaply scan for sequence matches across partitioned reads? DryIce is meant for these and more use cases.
 
 > [!NOTE]
-> DryIce is emphatically not an archival genomics file format, a replacement for BAM or FASTQ, or a general-purpose columnar analytics format. Its niche is quick _temporary files_, where FASTQ, BAM, and text data formats may be ill-suited for rapid I/O, parsing, and searching.
+> DryIce is emphatically _not_ an archival genomics file format, a replacement for BAM or FASTQ, or a general-purpose columnar analytics format. Its niche is quick _temporary files_, where FASTQ, BAM, and text data formats may be ill-suited for rapid I/O, parsing, and searching.
 
-Though optimized for I/O, DryIce also provides varying levels of compression, allowing users to sacrifice read/write throughput for the benefit of a reduced disk footprint. Its architecture is also extensible; Rust library users can provide their own sequence encoding, quality score encoding, sequence ID/description encoding, and sequence record key encoding (more on record keys below!). These user-provided implementations can live alongside the implementations provided out-of-the-box in the `dryice` crate.
+Though optimized for I/O, DryIce also provides varying levels of compactness, allowing users to sacrifice read/write throughput for the benefit of a reduced disk footprint. Its architecture is also extensible; Rust library users can provide their own sequence encoding, quality score encoding, sequence ID/description encoding, and sequence record key encoding (more on record keys below!). These user-provided implementations can live alongside the implementations provided out-of-the-box in the `dryice` crate.
 
 ## Getting Started
 
