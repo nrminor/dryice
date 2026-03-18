@@ -4,29 +4,47 @@ This document tracks future development priorities beyond the current core libra
 
 ## Language wrappers
 
-### Python wrapper (`dryice-python`)
+### Python wrapper (`dryice-python`) — implemented
 
-A PyO3-based wrapper crate that exposes the core dryice reader/writer API to Python. This is probably the single highest-impact item on the roadmap because the bioinformatics community overwhelmingly works in Python.
+The Python wrapper is scaffolded and working. It uses PyO3 for Rust bindings, maturin for building, and uv for Python project management. The wrapper provides:
 
-The wrapper should provide:
+- `Writer` and `WriterBuilder` classes with builder-pattern codec/key configuration
+- `Reader` and `ReaderBuilder` classes with Python iteration protocol (`__iter__`/`__next__`)
+- `Record` objects with `name`, `sequence`, `quality`, and optional `key` fields
+- enum dispatch across 6 codec/key combinations via `dispatch_all_writers!` / `dispatch_all_readers!` macros
+- type stubs (`dryice_python.pyi`) and `py.typed` marker for IDE support
+- 9 pytest round-trip tests covering all codec configurations and error handling
+- BioPython integration example (`examples/biopython_integration.py`)
+- CI via GitHub Actions (uv + maturin + pytest)
+- just recipes: `python-build`, `python-test`, `check-python`
 
-- a `DryIceWriter` class with a builder-style configuration API
-- a `DryIceReader` class that yields records as Python objects or integrates with common Python genomics types
-- support for all built-in codecs and record key types
-- ideally, integration with `numpy` or `pyarrow` for batch access to sequence/quality arrays
-- a path toward interop with `pysam`, `biopython`, and other Python genomics libraries
+Remaining future work for the Python wrapper:
 
-The core Rust API was designed from the start with wrapper-friendliness in mind: owned types at the public boundary, explicit configuration, structured errors, and no casual lifetime leakage. This should make the PyO3 wrapper relatively straightforward.
+- integration with `numpy` or `pyarrow` for batch access to sequence/quality arrays
+- deeper interop with `pysam` and other Python genomics libraries
+- publishing to PyPI
 
-### Node wrapper (`dryice-node`)
+### Node wrapper (`dryice-node`) — implemented
 
-An NAPI-RS-based wrapper crate that exposes the core dryice API to TypeScript and JavaScript. Lower priority than Python but still valuable for bioinformatics web tools, serverless genomics pipelines, and Node-based workflow engines.
+The Node wrapper is scaffolded and working. It uses NAPI-RS for Rust bindings, Bun for development/testing, and TypeScript exclusively (zero JavaScript source files). The wrapper provides:
 
-The wrapper should provide:
+- `WriterBuilder` and `Writer` classes with builder-pattern codec/key configuration
+- `ReaderBuilder` and `Reader` classes with `nextRecord()` and `records()` methods
+- `Record` objects with `name`, `sequence`, `quality`, and optional `key` fields as `Buffer` values
+- enum dispatch across codec/key combinations via `dispatch_all_writers!` / `dispatch_all_readers!` macros
+- TypeScript type definitions auto-generated from `#[napi]` macros
+- 9 Bun tests covering all codec configurations and error handling
+- CI via GitHub Actions (Bun + NAPI-RS)
+- just recipes: `node-build`, `node-test`, `check-node`
 
-- `DryIceWriter` and `DryIceReader` classes
-- support for built-in codecs and keys
-- integration with Node `Buffer` and `ReadableStream` types
+Remaining future work for the Node wrapper:
+
+- `ReadableStream` / `WritableStream` integration
+- publishing to npm
+
+### Wrapper design details
+
+The detailed API design for both wrappers, including the enum dispatch strategy, supported codec combinations, and the dividing line between exposed built-in functionality and Rust-only trait extensibility, is documented in `.agents/wrapper-design.md`.
 
 ## Rust ecosystem adapters (`dryice-adapters`)
 
