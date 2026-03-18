@@ -76,6 +76,12 @@ impl SequenceCodec for TwoBitExactCodec {
     const LOSSY: bool = false;
 
     fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
+        if sequence.is_empty() {
+            let mut out = Vec::with_capacity(4);
+            out.extend_from_slice(&0u32.to_le_bytes());
+            return Ok(out);
+        }
+
         let mut canonical = Vec::with_capacity(sequence.len());
         let mut ambig_positions: Vec<u32> = Vec::new();
         let mut ambig_bytes: Vec<u8> = Vec::new();
@@ -214,6 +220,12 @@ impl SequenceCodec for TwoBitLossyNCodec {
     const LOSSY: bool = true;
 
     fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
+        if sequence.is_empty() {
+            let mut out = Vec::with_capacity(4);
+            out.extend_from_slice(&0u32.to_le_bytes());
+            return Ok(out);
+        }
+
         let mut canonical = Vec::with_capacity(sequence.len());
         let mut ambig_positions: Vec<u32> = Vec::new();
 
