@@ -46,24 +46,16 @@ Remaining future work for the Node wrapper:
 
 The detailed API design for both wrappers, including the enum dispatch strategy, supported codec combinations, and the dividing line between exposed built-in functionality and Rust-only trait extensibility, is documented in `.agents/wrapper-design.md`.
 
-## Rust ecosystem adapters (`dryice-adapters`)
+## Rust ecosystem integration — resolved via examples, not adapter crates
 
-A separate workspace crate that provides feature-gated `SeqRecordLike` implementations for record types from popular Rust bioinformatics libraries. This bridges the gap between dryice's parser-agnostic core and the libraries users actually parse FASTQ/BAM/FASTA with.
+After careful consideration of semver implications, orphan rules, and maintenance burden, we decided against providing adapter crates for external bioinformatics libraries. The `SeqRecordLike` trait was designed to be trivial to implement (~15 lines), and adapter crates would create ongoing semver coupling to upstream libraries for minimal user benefit.
 
-Likely initial targets:
+Instead, the recommended pattern is a thin newtype wrapper with `Deref` and `SeqRecordLike` impls. Working examples are provided for:
 
-- `noodles-fastq` — the most actively maintained Rust FASTQ library
-- `needletail` — popular for high-performance sequence scanning
-- `bio` / `rust-bio` — the original Rust bioinformatics toolkit
+- `noodles-fastq` — see `dryice/examples/noodles_adapter.rs`
+- `rust-bio` — see `dryice/examples/rust_bio_adapter.rs`
 
-Each adapter would be behind a cargo feature flag so users only pay for the dependencies they actually use:
-
-```toml
-[dependencies]
-dryice-adapters = { version = "0.1", features = ["noodles"] }
-```
-
-The adapter crate should also provide convenience functions for common patterns like "read a FASTQ file and write it as dryice" or "convert a dryice file back to FASTQ."
+The pattern works identically for any library with a FASTQ record type. Users stay in control of which upstream version they use, and dryice has zero semver coupling to external bioinformatics crates.
 
 ## Real-world testing with SRA data
 
@@ -130,7 +122,7 @@ Individual codecs may benefit from:
 
 ### Measurement discipline
 
-Performance work must be measurement-driven. Every optimization should be benchmarked before and after with `criterion`, and regressions should be caught by CI. The benchmark suite should grow alongside the optimization work to cover:
+Performance work must be measurement-driven. Every optimization should be benchmarked before and after with `criterion`, and regressions should be caught by CI. A `benchmarks/` workspace crate already exists with criterion benchmarks comparing dryice (raw, compact, keyed) against FASTQ text, gzip FASTQ, and raw binary dump across write, read, and round-trip dimensions. The benchmark suite should grow alongside the optimization work to cover:
 
 - varying record sizes (short Illumina, long nanopore)
 - varying ambiguity rates
@@ -164,7 +156,7 @@ The current codec set covers the most important cases, but there may be value in
 
 `tokio::io::AsyncRead` and `AsyncWrite` variants of the reader and writer would matter for cloud-backed or networked storage scenarios. The core block-oriented architecture should make this relatively clean since blocks are natural units of async I/O. This should be gated behind a cargo feature (e.g., `async`) so that users who don't need async don't pay for the `tokio` dependency.
 
-Design considerations: the core types (`BlockBuilder`, `BlockDecoder`, `DryIceWriter`, `DryIceReader`) are likely already `Send` since they hold owned buffers and function pointers, but this has not been formally verified. The zero-copy reader pattern (where the reader implements `SeqRecordLike` for the current record via borrowed slices) may create friction with async borrowing, since references to `reader.sequence()` live until the next `next_record()` call. Before starting async work, we should add `static_assertions` for `Send` and `Sync` on the core types to catch regressions early.
+Design considerations: the core types (`BlockBuilder`, `BlockDecoder`, `DryIceWriter`, `DryIceReader`) are likely already `Send` since they hold owned buffers and use static dispatch (no function pointers), but this has not been formally verified. The zero-copy reader pattern (where the reader implements `SeqRecordLike` for the current record via borrowed slices) may create friction with async borrowing, since references to `reader.sequence()` live until the next `next_record()` call. Before starting async work, we should add `static_assertions` for `Send` and `Sync` on the core types to catch regressions early.
 
 ### Streaming support
 
@@ -182,12 +174,12 @@ Open design question: whether this should be feature-gated or always available. 
 
 ### Crates.io publishing
 
-The core `dryice` crate should be published to crates.io once the API surface feels stable enough for a `0.1.0` release. This requires:
+The core `dryice` crate should be published to crates.io once the API surface feels stable enough for a `0.1.0` release. Release infrastructure is partially in place: `cliff.toml` for git-cliff changelog generation and `.github/workflows/release.yml` for creating GitHub releases on version tags. Remaining work:
 
 - finalizing the public API surface
 - writing crate-level documentation suitable for docs.rs
 - choosing a minimum supported Rust version (MSRV) policy
-- setting up automated publishing in the release workflow
+- adding automated crates.io publishing to the release workflow
 
 ### Documentation site
 

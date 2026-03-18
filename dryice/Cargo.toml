@@ -14,4 +14,6 @@ thiserror = "2"
 workspace = true
 
 [dev-dependencies]
+bio = "3.0.0"
+noodles-fastq = "0.22.0"
 proptest = "1.10.0"

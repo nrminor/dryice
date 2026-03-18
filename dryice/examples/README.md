@@ -28,4 +28,12 @@ One of `dryice`'s strongest properties is that the reader implements `SeqRecordL
 
 ## custom_codec
 
-The codec system in `dryice` is trait-based, which means users can implement their own sequence, quality, or name encodings. This example implements a simple run-length encoding codec for sequences with long homopolymer runs, writes records using it, and reads them back. It also compares the encoded size against raw storage to show the compression effect. The example demonstrates the full codec contract: `TYPE_TAG`, `LOSSY`, `encode`, and `decode`.
+The codec system in `dryice` is trait-based, which means users can implement their own sequence, quality, or name encodings. This example implements a simple run-length encoding codec for sequences with long homopolymer runs, writes records using it, and reads them back. It also compares the encoded size against raw storage to show the compression effect. The example demonstrates the full codec contract: `TYPE_TAG`, `LOSSY`, `encode_into`, and `decode_into`.
+
+## noodles_adapter
+
+The recommended pattern for integrating `dryice` with the [noodles](https://github.com/zaeleus/noodles) FASTQ library. Rather than depending on an adapter crate, users write a thin newtype wrapper with a `Deref` impl and a `SeqRecordLike` impl — about 15 lines of code. This keeps the user in control of which noodles version they use and avoids any semver coupling between `dryice` and noodles. The example parses FASTQ records with noodles, writes them into a `dryice` buffer through the wrapper, and reads them back.
+
+## rust_bio_adapter
+
+The same newtype + `Deref` + `SeqRecordLike` pattern applied to the [rust-bio](https://github.com/rust-bio/rust-bio) library. This demonstrates that the pattern works identically for any library that provides a FASTQ record type — the only thing that changes is the three method bodies mapping the library's field accessors to `dryice`'s `name()`, `sequence()`, and `quality()` interface.

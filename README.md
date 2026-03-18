@@ -201,6 +201,10 @@ The [`dryice/examples/`](dryice/examples/) directory contains standalone program
 
 - [**custom_codec**](dryice/examples/custom_codec.rs) — Implementing a custom `SequenceCodec` (a simple run-length encoder), showing the full codec trait contract.
 
+- [**noodles_adapter**](dryice/examples/noodles_adapter.rs) — The recommended newtype + `Deref` + `SeqRecordLike` pattern for integrating with the [noodles](https://github.com/zaeleus/noodles) FASTQ library, without any adapter crate dependency.
+
+- [**rust_bio_adapter**](dryice/examples/rust_bio_adapter.rs) — The same adapter pattern applied to [rust-bio](https://github.com/rust-bio/rust-bio), demonstrating that it works identically for any library with a FASTQ record type.
+
 See the [examples README](dryice/examples/README.md) for more detailed descriptions of each example.
 
 ## Language Wrappers
