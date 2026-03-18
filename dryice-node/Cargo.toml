@@ -9,7 +9,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-dryice = { path = "../dryice" }
+dryice = { path = "../dryice", package = "dryice-bio" }
 napi = "3.0.0"
 napi-derive = "3.0.0"
 

@@ -394,7 +394,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "dryice"
+name = "dryice-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "dryice-bio",
+ "flate2",
+]
+
+[[package]]
+name = "dryice-bio"
 version = "0.1.0"
 dependencies = [
  "bio",
@@ -409,19 +418,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dryice-benchmarks"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "dryice",
- "flate2",
-]
-
-[[package]]
 name = "dryice-node"
 version = "0.1.0"
 dependencies = [
- "dryice",
+ "dryice-bio",
  "napi",
  "napi-build",
  "napi-derive",
@@ -431,7 +431,7 @@ dependencies = [
 name = "dryice-python"
 version = "0.1.0"
 dependencies = [
- "dryice",
+ "dryice-bio",
  "pyo3",
 ]
 

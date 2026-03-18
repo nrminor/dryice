@@ -16,14 +16,13 @@ Though optimized for I/O, DryIce also provides varying levels of compactness, al
 
 ## Getting Started
 
-> [!NOTE]
-> Publishing to crates.io is coming soon. For now, install from source.
-
-To add `dryice` as a dependency once it's published:
+To add `dryice` as a dependency:
 
 ```sh
-cargo add dryice
+cargo add dryice-bio
 ```
+
+The crate is published as `dryice-bio` on crates.io but the library name is `dryice`, so you import with `use dryice::...`.
 
 To build from source:
 

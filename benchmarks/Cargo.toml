@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-dryice = { path = "../dryice" }
+dryice = { path = "../dryice", package = "dryice-bio" }
 
 [dev-dependencies]
 criterion.workspace = true

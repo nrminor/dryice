@@ -1,10 +1,13 @@
 [package]
-name = "dryice"
+name = "dryice-bio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "High-throughput transient container for read-like genomic records"
+
+[lib]
+name = "dryice"
 
 [dependencies]
 bitnuc = "0.4.1"
