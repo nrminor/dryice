@@ -17,10 +17,11 @@
 
 # === Allowed: agent configuration ===
 !/.agents
-!/.agents/dryice-design-first-pass.md
-!/.agents/dryice-rust-architecture-plan.md
-!/.agents/dryice-rust-design-notebook.md
-!/.agents/dryice-consolidated-work-plan.md
+!/.agents/finished
+!/.agents/finished/dryice-design-first-pass.md
+!/.agents/finished/dryice-rust-architecture-plan.md
+!/.agents/finished/dryice-rust-design-notebook.md
+!/.agents/finished/dryice-consolidated-work-plan.md
 
 # === Allowed: core crate ===
 !/dryice
