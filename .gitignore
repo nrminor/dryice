@@ -24,6 +24,7 @@
 !/.agents/finished/dryice-consolidated-work-plan.md
 !/.agents/roadmap.md
 !/.agents/bitnuc-empty-input-bug.md
+!/.agents/wrapper-design.md
 
 # === Allowed: core crate ===
 !/dryice

@@ -61,6 +61,63 @@ The plan is to build a test harness (possibly conda-based for dependency managem
 
 This could also serve as a compelling demo: "download 10M reads from SRA, sort them globally by sequence using dryice as the spill format, and verify the result."
 
+## Performance engineering
+
+The primary goal of `dryice` is extremely high throughput. The current implementation is correct but largely naive — it uses the simplest possible approach at every level. That was the right starting point, but it leaves substantial room for improvement.
+
+This section tracks the ongoing effort to find, implement, test, and finalize performance improvements that push the format toward bare-metal throughput. Some of these will come at the expense of readability or internal simplicity, and that's acceptable. The library's reason for existing is speed.
+
+### Prior art and technique collection
+
+Before optimizing, we need to study what the fastest serialization and I/O libraries actually do. Relevant prior art includes:
+
+- `cap'n proto` and `flatbuffers` for zero-copy serialization patterns
+- `arrow` and `parquet` for columnar batch I/O techniques
+- `lz4` and `zstd` for fast compression integration patterns
+- `io_uring` and `aio` for async I/O submission on Linux
+- SIMD-accelerated parsing and encoding techniques (building on what `bitnuc` already provides)
+- buffer pooling and arena allocation patterns to reduce allocator pressure
+- cache-line-aware data layout for hot-path structures
+
+### Write path optimization
+
+The write path currently copies record data into block-owned `Vec<u8>` buffers and then writes the assembled block. Potential improvements include:
+
+- pre-allocated buffer pools that avoid repeated allocation/deallocation across blocks
+- direct-to-output encoding that skips the intermediate block buffer where possible
+- vectored writes (`writev`) to reduce syscall overhead when flushing blocks
+- block-level parallelism: encoding the next block on a background thread while the current one flushes
+
+### Read path optimization
+
+The read path currently reads each block into owned buffers and decodes eagerly on `advance()`. Potential improvements include:
+
+- lazy decoding: only decode a field when it's actually accessed, not on every `advance()`
+- prefetching: start reading the next block while the current one is being consumed
+- SIMD-accelerated index parsing for the fixed-width record index entries
+- reducing per-block allocation by reusing decode buffers across blocks (partially done already for the sequence decode buffer, but could be extended)
+
+### Codec-level optimization
+
+Individual codecs may benefit from:
+
+- lookup-table-based encoding/decoding instead of per-byte branching
+- SIMD-accelerated ambiguity scanning in the 2-bit codecs
+- batch quality binning using SIMD comparison and shuffle instructions
+- exploring whether the sparse ambiguity sideband can be encoded more compactly for the common case of zero ambiguous bases
+
+### Measurement discipline
+
+Performance work must be measurement-driven. Every optimization should be benchmarked before and after with `criterion`, and regressions should be caught by CI. The benchmark suite should grow alongside the optimization work to cover:
+
+- varying record sizes (short Illumina, long nanopore)
+- varying ambiguity rates
+- varying block sizes
+- file-backed I/O (not just in-memory buffers)
+- multi-threaded write/read scenarios
+
+The goal is not to optimize everything at once but to maintain a continuous improvement loop: measure, identify the bottleneck, optimize it, verify the improvement, move on.
+
 ## Format and codec enhancements
 
 ### Block-level checksums
