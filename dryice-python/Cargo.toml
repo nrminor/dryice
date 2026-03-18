@@ -1,0 +1,14 @@
+[package]
+name = "dryice-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "dryice_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+dryice = { path = "../dryice" }
+pyo3 = { version = "0.27", features = ["abi3-py39"] }

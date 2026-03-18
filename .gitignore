@@ -72,6 +72,22 @@
 !/benchmarks/benches/round_trip.rs
 !/benchmarks/README.md
 
+# === Allowed: Python wrapper crate ===
+!/dryice-python
+!/dryice-python/Cargo.toml
+!/dryice-python/pyproject.toml
+!/dryice-python/src
+!/dryice-python/src/lib.rs
+!/dryice-python/LICENSE
+!/dryice-python/README.md
+!/dryice-python/py.typed
+!/dryice-python/dryice_python.pyi
+!/dryice-python/tests
+!/dryice-python/tests/test_round_trip.py
+!/dryice-python/examples
+!/dryice-python/examples/biopython_integration.py
+!/dryice-python/uv.lock
+
 # === Allowed: skills ===
 !/skills
 !/skills/dryice

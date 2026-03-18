@@ -50,11 +50,36 @@ The crate would live at `dryice-node/` in the workspace.
 
 In the Rust API, codec selection happens at the type level via generic parameters. In Python and Node, there are no type parameters. The wrapper layer needs to map runtime codec choices to the correct Rust generic instantiation internally.
 
-The recommended approach is an internal enum dispatch layer inside each wrapper crate. The FFI boundary already has overhead (Python/Node function call costs dwarf the cost of a vtable lookup), so dynamic dispatch or enum matching inside the wrapper is fine.
+The decided approach is enum dispatch inside each wrapper crate. Each wrapper defines an internal `WriterInner` / `ReaderInner` enum whose variants are the supported codec/key combinations, monomorphized at compile time. A `dispatch_writer!` / `dispatch_reader!` macro forwards method calls through the match to avoid boilerplate.
 
-Rather than enumerating every possible combination of codecs and keys (which is combinatorial), the wrapper should support a practical set of common configurations and dispatch to the correct monomorphized Rust type internally. Additional combinations can be added on demand.
+The set of supported combinations is small in practice — roughly 10-12 variants covering the common codec and key configurations. Additional combinations can be added on demand by adding enum variants.
 
-An alternative is a thin dynamic-dispatch layer inside the core crate, feature-gated behind something like `dynamic`, that provides a `DynamicWriter` / `DynamicReader` not part of the public Rust API but available for wrapper use. This would avoid duplicating the dispatch logic across Python and Node wrappers.
+This approach was chosen over trait-object dynamic dispatch because:
+
+- the compiler can see all variants and potentially devirtualize
+- no changes to the core crate are required
+- no feature gates or internal-only code in the public library
+- the enum is explicit about exactly which configurations are supported
+
+The trait-object alternative (a `DynamicWriter` behind a feature gate in the core crate) was considered and rejected. The enum approach is simpler, keeps the core crate clean, and the FFI boundary overhead already dwarfs any dispatch cost difference.
+
+### Likely supported combinations
+
+```text
+sequence          quality         name           key
+RawAscii          Raw             Raw            None
+RawAscii          Raw             Raw            Bytes8
+RawAscii          Raw             Raw            Bytes16
+TwoBitExact       Raw             Raw            None
+TwoBitExact       Binned          Raw            None
+TwoBitExact       Binned          Split          None
+TwoBitExact       Binned          Split          Bytes8
+TwoBitExact       Binned          Split          Bytes16
+TwoBitLossyN      Raw             Raw            None
+TwoBitLossyN      Binned          Split          None
+```
+
+This covers the default path, the speed-optimized path, the compact path, and keyed variants of each. More can be added as demand appears.
 
 ## Python API design
 

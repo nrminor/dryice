@@ -92,6 +92,20 @@ prepare-push: check-all
     @echo ""
     @echo "Ready to push. Run: jj git push"
 
+# === Python Wrapper ===
+
+# Build and install the Python wrapper for development
+python-build:
+    cd dryice-python && uv run maturin develop
+
+# Run Python wrapper tests
+python-test: python-build
+    cd dryice-python && uv run pytest tests/ -v
+
+# Run all checks including Python
+check-python: check python-test
+    @echo "All checks including Python passed"
+
 # === Utility ===
 
 # Clean build artifacts
