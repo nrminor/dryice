@@ -183,6 +183,26 @@ DryIce ships with built-in codecs for all three record fields, plus built-in rec
 | `Bytes16Key` | 16 bytes     | General-purpose 16-byte fixed-width key.                                                |
 | Custom       | User-defined | Implement the `RecordKey` trait with your own width, type tag, and encode/decode logic. |
 
+## Examples
+
+The [`dryice/examples/`](dryice/examples/) directory contains standalone programs demonstrating the primary workflows `dryice` is designed for. Run any example with `cargo run --example <name>`.
+
+- [**spill_reload**](dryice/examples/spill_reload.rs) — The most fundamental `dryice` pattern: spilling a batch of sequencing records to a temporary buffer and reloading them, demonstrating the building block for any out-of-core workflow.
+
+- [**external_merge_sort**](dryice/examples/external_merge_sort.rs) — A complete external k-way merge sort that spills sorted runs with precomputed 8-byte record keys, then merges them using a min-heap that compares only the keys without touching sequence payloads.
+
+- [**partitioning**](dryice/examples/partitioning.rs) — Partitioning records into separate temporary buckets based on a derived criterion, showing how `dryice` can serve as fast backing storage for partitioning stages in larger pipelines.
+
+- [**compact_codecs**](dryice/examples/compact_codecs.rs) — Comparing raw versus compact storage using `TwoBitExactCodec`, `BinnedQualityCodec`, and `SplitNameCodec`, with size ratios and round-trip verification.
+
+- [**record_keys**](dryice/examples/record_keys.rs) — Writing and reading records with fixed-width accelerator keys, demonstrating how keys are stored, retrieved, and associated with records through the type system.
+
+- [**zero_copy_pipe**](dryice/examples/zero_copy_pipe.rs) — Piping records from one `dryice` file to another with no per-record allocation, using the fact that `DryIceReader` implements `SeqRecordLike`.
+
+- [**custom_codec**](dryice/examples/custom_codec.rs) — Implementing a custom `SequenceCodec` (a simple run-length encoder), showing the full codec trait contract.
+
+See the [examples README](dryice/examples/README.md) for more detailed descriptions of each example.
+
 ## Language Wrappers
 
 Libraries for Python and Node (TypeScript/JavaScript) are coming soon!

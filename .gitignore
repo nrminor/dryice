@@ -11,6 +11,7 @@
 !/AGENTS.md
 !/README.md
 !/LICENSE
+!/cliff.toml
 !/.cargo
 !/.cargo/config.toml
 
@@ -66,7 +67,13 @@
 !/benchmarks/benches/read_throughput.rs
 !/benchmarks/benches/round_trip.rs
 
+# === Allowed: skills ===
+!/skills
+!/skills/dryice
+!/skills/dryice/SKILL.md
+
 # === Allowed: GitHub workflows ===
 !/.github
 !/.github/workflows
 !/.github/workflows/ci.yml
+!/.github/workflows/release.yml
