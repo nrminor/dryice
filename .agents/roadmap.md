@@ -158,11 +158,11 @@ The current codec set covers the most important cases, but there may be value in
 
 Remaining async work: `static_assertions` for `Send`/`Sync` on core types, and a `Stream`-based convenience API (currently deferred — users can wrap `next_record().await` with `futures::stream::unfold` if needed).
 
-### Memory-mapped reading
+### Memory-mapped reading — implemented
 
-An `mmap`-based reader that maps block data directly from the OS page cache rather than reading into owned buffers. This could be faster for random-access patterns and would reduce memory pressure for very large files. The block-oriented layout is well-suited to this since blocks are self-contained and aligned.
+`MmapDryIceReader` is available behind the `mmap` feature flag, using `memmap2` to map dryice files into the process address space. Blocks are parsed directly from the mapped region with no buffer allocation for block loading. The reader implements `SeqRecordLike` for zero-copy access and verifies codec tags at block load time. Safety documentation notes that concurrent file modification is undefined behavior.
 
-Open design question: whether this should be feature-gated or always available. The `memmap2` dependency is small and platform-portable, so there may not be a strong reason to gate it. On the other hand, mmap semantics are subtly different from normal reads (signals on I/O errors, platform-specific behavior), so keeping it opt-in might be the more honest choice.
+The mmap reader is best suited for file-backed I/O where the OS page cache can prefetch intelligently. For in-memory buffers, the sync reader is faster since it avoids mmap overhead. File-backed benchmarks comparing mmap vs sync readers are planned future work.
 
 ### Crates.io publishing
 

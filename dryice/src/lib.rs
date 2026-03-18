@@ -226,6 +226,8 @@ mod error;
 mod format;
 mod io;
 pub mod key;
+#[cfg(feature = "mmap")]
+pub mod mmap_io;
 mod record;
 
 #[cfg(feature = "async")]
@@ -239,4 +241,6 @@ pub use config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter};
 pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};
+#[cfg(feature = "mmap")]
+pub use mmap_io::MmapDryIceReader;
 pub use record::{SeqRecord, SeqRecordExt, SeqRecordLike};

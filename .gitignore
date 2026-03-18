@@ -36,6 +36,7 @@
 !/dryice/src/async_io/format.rs
 !/dryice/src/async_io/reader.rs
 !/dryice/src/async_io/writer.rs
+!/dryice/src/mmap_io.rs
 !/dryice/src/error.rs
 !/dryice/src/record.rs
 !/dryice/src/block
@@ -68,6 +69,7 @@
 !/dryice/tests
 !/dryice/tests/round_trip.rs
 !/dryice/tests/async_round_trip.rs
+!/dryice/tests/mmap_round_trip.rs
 
 # === Allowed: benchmarks crate ===
 !/benchmarks
