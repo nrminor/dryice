@@ -16,6 +16,9 @@ pub trait QualityCodec: Sized {
     /// Whether this encoding is lossy.
     const LOSSY: bool;
 
+    /// Whether the encoded form is identical to the raw input bytes.
+    const IS_IDENTITY: bool = false;
+
     /// Encode raw quality score bytes, appending the encoded bytes
     /// directly into the provided output buffer.
     ///
@@ -68,6 +71,7 @@ pub struct RawQualityCodec;
 impl QualityCodec for RawQualityCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:qual:raw!!!";
     const LOSSY: bool = false;
+    const IS_IDENTITY: bool = true;
 
     fn encode_into(quality: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
         output.extend_from_slice(quality);

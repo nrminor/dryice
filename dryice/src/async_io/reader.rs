@@ -117,7 +117,14 @@ impl<R: AsyncReadExt + Unpin, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K
     /// if codec tags don't match.
     pub async fn next_record(&mut self) -> Result<bool, DryIceError> {
         if let Some(block) = &mut self.current_block
-            && block.advance(S::decode_into, Q::decode_into, N::decode_to_bytes_into)?
+            && block.advance(
+                S::decode_into,
+                Q::decode_into,
+                N::decode_to_bytes_into,
+                S::IS_IDENTITY,
+                Q::IS_IDENTITY,
+                N::IS_IDENTITY,
+            )?
         {
             return Ok(true);
         }
@@ -150,7 +157,14 @@ impl<R: AsyncReadExt + Unpin, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K
 
                 let mut decoder =
                     BlockDecoder::from_header_and_reader(header, &mut self.payload_buf.as_slice())?;
-                if decoder.advance(S::decode_into, Q::decode_into, N::decode_to_bytes_into)? {
+                if decoder.advance(
+                    S::decode_into,
+                    Q::decode_into,
+                    N::decode_to_bytes_into,
+                    S::IS_IDENTITY,
+                    Q::IS_IDENTITY,
+                    N::IS_IDENTITY,
+                )? {
                     self.current_block = Some(decoder);
                     return Ok(true);
                 }

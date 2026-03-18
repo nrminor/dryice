@@ -38,15 +38,15 @@ There are three benchmark suites, each comparing the same set of formats.
 
 ## Formats compared
 
-| Format | Description |
-|---|---|
-| raw binary | Length-prefixed binary dump of name + sequence + quality bytes. Theoretical throughput ceiling — no structure, no indexing, no codec overhead. |
-| FASTQ | Standard four-line text format with manual formatting and minimal line-based scanning. |
-| gzip FASTQ | FASTQ compressed with `flate2` at fast compression level. |
-| dryice raw | `dryice` with `RawAsciiCodec` + `RawQualityCodec` + `RawNameCodec`. The speed-first configuration. |
-| dryice two-bit exact | `dryice` with `TwoBitExactCodec` for sequences, raw quality and names. |
-| dryice compact | `dryice` with `TwoBitExactCodec` + `BinnedQualityCodec` + `SplitNameCodec`. Full compact configuration. |
-| dryice raw + key | `dryice` raw codecs with an 8-byte `Bytes8Key` record key. |
+| Format               | Description                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| raw binary           | Length-prefixed binary dump of name + sequence + quality bytes. Theoretical throughput ceiling — no structure, no indexing, no codec overhead. |
+| FASTQ                | Standard four-line text format with manual formatting and minimal line-based scanning.                                                         |
+| gzip FASTQ           | FASTQ compressed with `flate2` at fast compression level.                                                                                      |
+| dryice raw           | `dryice` with `RawAsciiCodec` + `RawQualityCodec` + `RawNameCodec`. The speed-first configuration.                                             |
+| dryice two-bit exact | `dryice` with `TwoBitExactCodec` for sequences, raw quality and names.                                                                         |
+| dryice compact       | `dryice` with `TwoBitExactCodec` + `BinnedQualityCodec` + `SplitNameCodec`. Full compact configuration.                                        |
+| dryice raw + key     | `dryice` raw codecs with an 8-byte `Bytes8Key` record key.                                                                                     |
 
 ## Early results
 
@@ -54,40 +54,41 @@ These numbers are from a single machine (Apple M-series, `target-cpu=native`) an
 
 ### Write throughput
 
-| Format | Throughput |
-|---|---|
-| raw binary | 32.9 GiB/s |
-| FASTQ | 31.4 GiB/s |
-| **dryice raw** | **15.7 GiB/s** |
-| gzip FASTQ | 1.8 GiB/s |
-| **dryice two-bit exact** | **1.8 GiB/s** |
-| **dryice compact** | **880 MiB/s** |
+| Format                   | Throughput     |
+| ------------------------ | -------------- |
+| raw binary               | 32.9 GiB/s     |
+| FASTQ                    | 31.4 GiB/s     |
+| **dryice raw**           | **15.7 GiB/s** |
+| gzip FASTQ               | 1.8 GiB/s      |
+| **dryice two-bit exact** | **1.8 GiB/s**  |
+| **dryice compact**       | **880 MiB/s**  |
 
 ### Read throughput
 
-| Format | Throughput |
-|---|---|
-| raw binary | 31.8 GiB/s |
-| **dryice raw** | **9.0 GiB/s** |
-| **dryice compact** | **3.5 GiB/s** |
-| FASTQ | 3.1 GiB/s |
-| gzip FASTQ | 1.2 GiB/s |
+| Format             | Throughput     |
+| ------------------ | -------------- |
+| raw binary         | 31.8 GiB/s     |
+| **dryice raw**     | **29.0 GiB/s** |
+| **dryice keyed**   | **28.1 GiB/s** |
+| **dryice compact** | **3.5 GiB/s**  |
+| FASTQ              | 3.1 GiB/s      |
+| gzip FASTQ         | 1.2 GiB/s      |
 
 ### Round-trip throughput
 
-| Format | Throughput |
-|---|---|
-| raw binary | 16.3 GiB/s |
-| **dryice raw** | **5.7 GiB/s** |
-| FASTQ | 3.0 GiB/s |
-| **dryice compact** | **721 MiB/s** |
-| gzip FASTQ | 696 MiB/s |
+| Format             | Throughput     |
+| ------------------ | -------------- |
+| raw binary         | 16.3 GiB/s     |
+| **dryice raw**     | **10.0 GiB/s** |
+| FASTQ              | 3.0 GiB/s      |
+| **dryice compact** | **699 MiB/s**  |
+| gzip FASTQ         | 696 MiB/s      |
 
 ### What the numbers mean
 
 The raw binary baseline represents the theoretical throughput ceiling: just copying bytes with length prefixes, no structure, no indexing, no codec overhead. Everything else is measured against that ceiling.
 
-dryice raw mode is now nearly twice as fast as plain FASTQ text on round-trip throughput (5.7 GiB/s vs 3.0 GiB/s) while providing structured block-oriented access, zero-copy reads, optional record keys, and a self-describing format. On reads specifically, dryice raw is nearly 3x faster than FASTQ because the block/index structure avoids line-by-line text scanning.
+dryice raw read throughput is now within 10% of the raw binary ceiling (29.0 vs 31.8 GiB/s) thanks to identity codec optimization that returns slices directly into block payload bytes with zero copying. On round-trip, dryice raw is over 3x faster than FASTQ text (10.0 vs 3.0 GiB/s) while providing structured block-oriented access, zero-copy reads, optional record keys, and a self-describing format.
 
 dryice compact mode trades throughput for a smaller footprint. It is comparable to gzip FASTQ in round-trip speed but provides random access within blocks and structured record fields rather than requiring full decompression before any record can be accessed.
 

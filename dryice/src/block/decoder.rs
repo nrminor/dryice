@@ -13,6 +13,14 @@ const INDEX_ENTRY_SIZE: usize = 24;
 /// Function pointer type for codec decode-into operations.
 type DecodeFn = fn(&[u8], usize, &mut Vec<u8>) -> Result<(), DryIceError>;
 
+/// Tracks which codecs are identity (raw bytes = decoded bytes).
+#[derive(Clone, Copy, Default)]
+struct CodecIdentity {
+    name: bool,
+    sequence: bool,
+    quality: bool,
+}
+
 /// Decodes records from a single parsed block.
 ///
 /// Holds the block header, parsed index, and raw section bytes.
@@ -31,6 +39,7 @@ pub(crate) struct BlockDecoder {
     decoded_name_buf: Vec<u8>,
     decoded_sequence_buf: Vec<u8>,
     decoded_quality_buf: Vec<u8>,
+    identity: CodecIdentity,
 }
 
 fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
@@ -112,6 +121,7 @@ impl BlockDecoder {
             decoded_name_buf: Vec::new(),
             decoded_sequence_buf: Vec::new(),
             decoded_quality_buf: Vec::new(),
+            identity: CodecIdentity::default(),
         })
     }
 
@@ -121,20 +131,34 @@ impl BlockDecoder {
         seq_decode_fn: DecodeFn,
         qual_decode_fn: DecodeFn,
         name_decode_fn: DecodeFn,
+        seq_identity: bool,
+        qual_identity: bool,
+        name_identity: bool,
     ) -> Result<bool, DryIceError> {
         if self.started {
             self.cursor += 1;
         } else {
             self.started = true;
+            self.identity = CodecIdentity {
+                name: name_identity,
+                sequence: seq_identity,
+                quality: qual_identity,
+            };
         }
 
         if self.cursor >= self.index.len() {
             return Ok(false);
         }
 
-        self.decode_current_name(name_decode_fn)?;
-        self.decode_current_sequence(seq_decode_fn)?;
-        self.decode_current_quality(qual_decode_fn)?;
+        if !self.identity.name {
+            self.decode_current_name(name_decode_fn)?;
+        }
+        if !self.identity.sequence {
+            self.decode_current_sequence(seq_decode_fn)?;
+        }
+        if !self.identity.quality {
+            self.decode_current_quality(qual_decode_fn)?;
+        }
 
         Ok(true)
     }
@@ -186,16 +210,42 @@ impl BlockDecoder {
 
     /// The current record's decoded name bytes.
     pub fn current_name(&self) -> &[u8] {
-        &self.decoded_name_buf
+        if self.identity.name {
+            if let Some(names) = &self.name_bytes {
+                let entry = &self.index[self.cursor];
+                let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
+                let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
+                return &names[start..start + len];
+            }
+            &[]
+        } else {
+            &self.decoded_name_buf
+        }
     }
 
     /// The current record's decoded sequence.
     pub fn current_sequence(&self) -> &[u8] {
-        &self.decoded_sequence_buf
+        if self.identity.sequence {
+            let entry = &self.index[self.cursor];
+            let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
+            let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
+            &self.sequence_bytes[start..start + len]
+        } else {
+            &self.decoded_sequence_buf
+        }
     }
 
     /// The current record's decoded quality.
     pub fn current_quality(&self) -> &[u8] {
+        if self.identity.quality {
+            if let Some(quals) = &self.quality_bytes {
+                let entry = &self.index[self.cursor];
+                let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+                let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+                return &quals[start..start + len];
+            }
+            return &[];
+        }
         &self.decoded_quality_buf
     }
 

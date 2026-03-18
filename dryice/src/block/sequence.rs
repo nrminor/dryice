@@ -16,6 +16,11 @@ pub trait SequenceCodec: Sized {
     /// Whether this encoding is lossy.
     const LOSSY: bool;
 
+    /// Whether the encoded form is identical to the raw input bytes.
+    /// When true, the decoder can skip decoding and return slices
+    /// directly into the block's payload buffer.
+    const IS_IDENTITY: bool = false;
+
     /// Encode a raw ASCII nucleotide sequence, appending the encoded
     /// bytes directly into the provided output buffer.
     ///
@@ -75,6 +80,7 @@ pub struct RawAsciiCodec;
 impl SequenceCodec for RawAsciiCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:raw-asc";
     const LOSSY: bool = false;
+    const IS_IDENTITY: bool = true;
 
     fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
         output.extend_from_slice(sequence);

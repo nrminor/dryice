@@ -17,6 +17,9 @@ pub trait NameCodec: Sized {
     /// Whether this encoding is lossy.
     const LOSSY: bool;
 
+    /// Whether the encoded form is identical to the raw input bytes.
+    const IS_IDENTITY: bool = false;
+
     /// The decoded representation of a name.
     type Decoded;
 
@@ -90,6 +93,7 @@ pub struct RawNameCodec;
 impl NameCodec for RawNameCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:name:raw!!!";
     const LOSSY: bool = false;
+    const IS_IDENTITY: bool = true;
     type Decoded = RawName;
 
     fn encode_into(name: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
