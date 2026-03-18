@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["dryice"]
+members = ["dryice", "benchmarks"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,6 +17,9 @@ style = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
 unwrap_used = "deny"
+
+[workspace.dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [profile.dev]
 incremental = true

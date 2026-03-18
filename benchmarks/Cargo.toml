@@ -1,0 +1,27 @@
+[package]
+name = "dryice-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+dryice = { path = "../dryice" }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "write_throughput"
+harness = false
+
+[[bench]]
+name = "read_throughput"
+harness = false
+
+[[bench]]
+name = "round_trip"
+harness = false
+
+[lints]
+workspace = true

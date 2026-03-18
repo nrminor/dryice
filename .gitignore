@@ -56,6 +56,16 @@
 !/dryice/tests
 !/dryice/tests/round_trip.rs
 
+# === Allowed: benchmarks crate ===
+!/benchmarks
+!/benchmarks/Cargo.toml
+!/benchmarks/src
+!/benchmarks/src/lib.rs
+!/benchmarks/benches
+!/benchmarks/benches/write_throughput.rs
+!/benchmarks/benches/read_throughput.rs
+!/benchmarks/benches/round_trip.rs
+
 # === Allowed: GitHub workflows ===
 !/.github
 !/.github/workflows
