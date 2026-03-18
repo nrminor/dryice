@@ -1,0 +1,34 @@
+{
+  "name": "dryice-node",
+  "version": "0.1.0",
+  "description": "Node.js/TypeScript bindings for the dryice high-throughput genomic record container",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nrminor/dryice"
+  },
+  "napi": {
+    "binaryName": "dryice-node",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu"
+    ]
+  },
+  "files": [
+    "index.d.ts",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.2.0",
+    "@types/bun": "latest"
+  }
+}

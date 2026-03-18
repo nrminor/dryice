@@ -88,6 +88,19 @@
 !/dryice-python/examples/biopython_integration.py
 !/dryice-python/uv.lock
 
+# === Allowed: Node wrapper crate ===
+!/dryice-node
+!/dryice-node/Cargo.toml
+!/dryice-node/build.rs
+!/dryice-node/package.json
+!/dryice-node/tsconfig.json
+!/dryice-node/src
+!/dryice-node/src/lib.rs
+!/dryice-node/LICENSE
+!/dryice-node/README.md
+!/dryice-node/tests
+!/dryice-node/tests/round_trip.test.ts
+
 # === Allowed: skills ===
 !/skills
 !/skills/dryice

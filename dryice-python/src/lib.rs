@@ -35,6 +35,31 @@ impl SeqRecordLike for SliceRecord<'_> {
 
 type W = Vec<u8>;
 
+macro_rules! dispatch_all_writers {
+    ($self:expr, $method:ident ( $($arg:expr),* )) => {
+        match $self {
+            WriterInner::RawRawRaw(w) => w.$method($($arg),*),
+            WriterInner::TwoBitRawRaw(w) => w.$method($($arg),*),
+            WriterInner::TwoBitBinnedSplit(w) => w.$method($($arg),*),
+            WriterInner::LossyBinnedSplit(w) => w.$method($($arg),*),
+            WriterInner::RawRawRawB8(w) => w.$method($($arg),*),
+            WriterInner::TwoBitBinnedSplitB8(w) => w.$method($($arg),*),
+        }
+    };
+}
+
+macro_rules! dispatch_all_readers {
+    ($self:expr, $method:ident ( $($arg:expr),* )) => {
+        match $self {
+            ReaderInner::RawRawRaw(r) => r.$method($($arg),*),
+            ReaderInner::TwoBitRawRaw(r) => r.$method($($arg),*),
+            ReaderInner::TwoBitBinnedSplit(r) => r.$method($($arg),*),
+            ReaderInner::LossyBinnedSplit(r) => r.$method($($arg),*),
+            ReaderInner::RawRawRawB8(r) => r.$method($($arg),*),
+        }
+    };
+}
+
 enum WriterInner {
     RawRawRaw(RustWriter<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitRawRaw(RustWriter<W, TwoBitExactCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
@@ -94,14 +119,7 @@ impl WriterInner {
     }
 
     fn finish(self) -> Result<Vec<u8>, DryIceError> {
-        match self {
-            Self::RawRawRaw(w) => w.finish(),
-            Self::TwoBitRawRaw(w) => w.finish(),
-            Self::TwoBitBinnedSplit(w) => w.finish(),
-            Self::LossyBinnedSplit(w) => w.finish(),
-            Self::RawRawRawB8(w) => w.finish(),
-            Self::TwoBitBinnedSplitB8(w) => w.finish(),
-        }
+        dispatch_all_writers!(self, finish())
     }
 }
 
@@ -121,43 +139,19 @@ enum ReaderInner {
 
 impl ReaderInner {
     fn next_record(&mut self) -> Result<bool, DryIceError> {
-        match self {
-            Self::RawRawRaw(r) => r.next_record(),
-            Self::TwoBitRawRaw(r) => r.next_record(),
-            Self::TwoBitBinnedSplit(r) => r.next_record(),
-            Self::LossyBinnedSplit(r) => r.next_record(),
-            Self::RawRawRawB8(r) => r.next_record(),
-        }
+        dispatch_all_readers!(self, next_record())
     }
 
     fn name(&self) -> &[u8] {
-        match self {
-            Self::RawRawRaw(r) => r.name(),
-            Self::TwoBitRawRaw(r) => r.name(),
-            Self::TwoBitBinnedSplit(r) => r.name(),
-            Self::LossyBinnedSplit(r) => r.name(),
-            Self::RawRawRawB8(r) => r.name(),
-        }
+        dispatch_all_readers!(self, name())
     }
 
     fn sequence(&self) -> &[u8] {
-        match self {
-            Self::RawRawRaw(r) => r.sequence(),
-            Self::TwoBitRawRaw(r) => r.sequence(),
-            Self::TwoBitBinnedSplit(r) => r.sequence(),
-            Self::LossyBinnedSplit(r) => r.sequence(),
-            Self::RawRawRawB8(r) => r.sequence(),
-        }
+        dispatch_all_readers!(self, sequence())
     }
 
     fn quality(&self) -> &[u8] {
-        match self {
-            Self::RawRawRaw(r) => r.quality(),
-            Self::TwoBitRawRaw(r) => r.quality(),
-            Self::TwoBitBinnedSplit(r) => r.quality(),
-            Self::LossyBinnedSplit(r) => r.quality(),
-            Self::RawRawRawB8(r) => r.quality(),
-        }
+        dispatch_all_readers!(self, quality())
     }
 
     fn record_key(&self) -> Result<Option<Vec<u8>>, DryIceError> {

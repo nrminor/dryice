@@ -106,6 +106,20 @@ python-test: python-build
 check-python: check python-test
     @echo "All checks including Python passed"
 
+# === Node Wrapper ===
+
+# Build the Node wrapper native module
+node-build:
+    cd dryice-node && bun run build:debug
+
+# Run Node wrapper tests
+node-test: node-build
+    cd dryice-node && bun test
+
+# Run all checks including Node
+check-node: check node-test
+    @echo "All checks including Node passed"
+
 # === Utility ===
 
 # Clean build artifacts

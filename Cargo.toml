@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["dryice", "benchmarks", "dryice-python"]
+members = ["dryice", "benchmarks", "dryice-python", "dryice-node"]
 
 [workspace.package]
 version = "0.1.0"
