@@ -16,15 +16,17 @@ pub trait SequenceCodec: Sized {
     /// Whether this encoding is lossy.
     const LOSSY: bool;
 
-    /// Encode a raw ASCII nucleotide sequence into the codec's format.
+    /// Encode a raw ASCII nucleotide sequence, appending the encoded
+    /// bytes directly into the provided output buffer.
     ///
     /// # Errors
     ///
     /// Returns an error if the sequence contains bytes that are invalid
     /// for this encoding.
-    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError>;
+    fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError>;
 
-    /// Decode an encoded buffer back into raw ASCII nucleotide bytes.
+    /// Decode an encoded buffer, appending the decoded ASCII bytes
+    /// directly into the provided output buffer.
     ///
     /// `original_len` is the number of bases in the original sequence,
     /// needed because some encodings pad or compress.
@@ -32,7 +34,38 @@ pub trait SequenceCodec: Sized {
     /// # Errors
     ///
     /// Returns an error if the encoded data is corrupt or inconsistent.
-    fn decode(encoded: &[u8], original_len: usize) -> Result<Vec<u8>, DryIceError>;
+    fn decode_into(
+        encoded: &[u8],
+        original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError>;
+
+    /// Encode a sequence, returning a new allocated buffer.
+    ///
+    /// This is a convenience wrapper around [`encode_into`](Self::encode_into).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sequence contains bytes that are invalid
+    /// for this encoding.
+    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
+        let mut out = Vec::new();
+        Self::encode_into(sequence, &mut out)?;
+        Ok(out)
+    }
+
+    /// Decode an encoded buffer, returning a new allocated buffer.
+    ///
+    /// This is a convenience wrapper around [`decode_into`](Self::decode_into).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the encoded data is corrupt or inconsistent.
+    fn decode(encoded: &[u8], original_len: usize) -> Result<Vec<u8>, DryIceError> {
+        let mut out = Vec::new();
+        Self::decode_into(encoded, original_len, &mut out)?;
+        Ok(out)
+    }
 }
 
 /// Raw ASCII sequence storage. No transformation — fastest possible
@@ -43,12 +76,18 @@ impl SequenceCodec for RawAsciiCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:raw-asc";
     const LOSSY: bool = false;
 
-    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
-        Ok(sequence.to_vec())
+    fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
+        output.extend_from_slice(sequence);
+        Ok(())
     }
 
-    fn decode(encoded: &[u8], _original_len: usize) -> Result<Vec<u8>, DryIceError> {
-        Ok(encoded.to_vec())
+    fn decode_into(
+        encoded: &[u8],
+        _original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError> {
+        output.extend_from_slice(encoded);
+        Ok(())
     }
 }
 
@@ -75,11 +114,10 @@ impl SequenceCodec for TwoBitExactCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:2b-exct";
     const LOSSY: bool = false;
 
-    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
+    fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
         if sequence.is_empty() {
-            let mut out = Vec::with_capacity(4);
-            out.extend_from_slice(&0u32.to_le_bytes());
-            return Ok(out);
+            output.extend_from_slice(&0u32.to_le_bytes());
+            return Ok(());
         }
 
         let mut canonical = Vec::with_capacity(sequence.len());
@@ -106,30 +144,29 @@ impl SequenceCodec for TwoBitExactCodec {
             }
         })?;
 
-        let packed_byte_len = packed_bases.len() * 8;
         let ambig_count =
             u32::try_from(ambig_positions.len()).map_err(|_| DryIceError::SectionOverflow {
                 field: "ambiguity count",
             })?;
-        let sideband_len = 4 + (ambig_positions.len() * 4) + ambig_bytes.len();
-        let total_len = packed_byte_len + sideband_len;
-
-        let mut out = Vec::with_capacity(total_len);
 
         for word in &packed_bases {
-            out.extend_from_slice(&word.to_le_bytes());
+            output.extend_from_slice(&word.to_le_bytes());
         }
 
-        out.extend_from_slice(&ambig_count.to_le_bytes());
+        output.extend_from_slice(&ambig_count.to_le_bytes());
         for &pos in &ambig_positions {
-            out.extend_from_slice(&pos.to_le_bytes());
+            output.extend_from_slice(&pos.to_le_bytes());
         }
-        out.extend_from_slice(&ambig_bytes);
+        output.extend_from_slice(&ambig_bytes);
 
-        Ok(out)
+        Ok(())
     }
 
-    fn decode(encoded: &[u8], original_len: usize) -> Result<Vec<u8>, DryIceError> {
+    fn decode_into(
+        encoded: &[u8],
+        original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError> {
         let packed_word_count = original_len.div_ceil(32);
         let packed_byte_len = packed_word_count * 8;
 
@@ -146,8 +183,7 @@ impl SequenceCodec for TwoBitExactCodec {
             ]));
         }
 
-        let mut decoded = Vec::with_capacity(original_len);
-        bitnuc::twobit::decode(&packed_words, original_len, &mut decoded).map_err(|_| {
+        bitnuc::twobit::decode(&packed_words, original_len, output).map_err(|_| {
             DryIceError::CorruptBlockLayout {
                 message: "failed to decode 2-bit packed sequence",
             }
@@ -183,16 +219,16 @@ impl SequenceCodec for TwoBitExactCodec {
 
             let iupac_byte = sideband[positions_end + i];
 
-            if pos >= decoded.len() {
+            if pos >= output.len() {
                 return Err(DryIceError::CorruptBlockLayout {
                     message: "TwoBitExact ambiguity position out of range",
                 });
             }
 
-            decoded[pos] = iupac_byte;
+            output[pos] = iupac_byte;
         }
 
-        Ok(decoded)
+        Ok(())
     }
 }
 
@@ -219,11 +255,10 @@ impl SequenceCodec for TwoBitLossyNCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:2b-losN";
     const LOSSY: bool = true;
 
-    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
+    fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
         if sequence.is_empty() {
-            let mut out = Vec::with_capacity(4);
-            out.extend_from_slice(&0u32.to_le_bytes());
-            return Ok(out);
+            output.extend_from_slice(&0u32.to_le_bytes());
+            return Ok(());
         }
 
         let mut canonical = Vec::with_capacity(sequence.len());
@@ -248,29 +283,28 @@ impl SequenceCodec for TwoBitLossyNCodec {
             }
         })?;
 
-        let packed_byte_len = packed_bases.len() * 8;
         let ambig_count =
             u32::try_from(ambig_positions.len()).map_err(|_| DryIceError::SectionOverflow {
                 field: "ambiguity count",
             })?;
-        let sideband_len = 4 + (ambig_positions.len() * 4);
-        let total_len = packed_byte_len + sideband_len;
-
-        let mut out = Vec::with_capacity(total_len);
 
         for word in &packed_bases {
-            out.extend_from_slice(&word.to_le_bytes());
+            output.extend_from_slice(&word.to_le_bytes());
         }
 
-        out.extend_from_slice(&ambig_count.to_le_bytes());
+        output.extend_from_slice(&ambig_count.to_le_bytes());
         for &pos in &ambig_positions {
-            out.extend_from_slice(&pos.to_le_bytes());
+            output.extend_from_slice(&pos.to_le_bytes());
         }
 
-        Ok(out)
+        Ok(())
     }
 
-    fn decode(encoded: &[u8], original_len: usize) -> Result<Vec<u8>, DryIceError> {
+    fn decode_into(
+        encoded: &[u8],
+        original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError> {
         let packed_word_count = original_len.div_ceil(32);
         let packed_byte_len = packed_word_count * 8;
 
@@ -287,8 +321,7 @@ impl SequenceCodec for TwoBitLossyNCodec {
             ]));
         }
 
-        let mut decoded = Vec::with_capacity(original_len);
-        bitnuc::twobit::decode(&packed_words, original_len, &mut decoded).map_err(|_| {
+        bitnuc::twobit::decode(&packed_words, original_len, output).map_err(|_| {
             DryIceError::CorruptBlockLayout {
                 message: "failed to decode 2-bit packed sequence",
             }
@@ -320,16 +353,16 @@ impl SequenceCodec for TwoBitLossyNCodec {
                 sideband[pos_offset + 3],
             ]) as usize;
 
-            if pos >= decoded.len() {
+            if pos >= output.len() {
                 return Err(DryIceError::CorruptBlockLayout {
                     message: "TwoBitLossyN ambiguity position out of range",
                 });
             }
 
-            decoded[pos] = b'N';
+            output[pos] = b'N';
         }
 
-        Ok(decoded)
+        Ok(())
     }
 }
 

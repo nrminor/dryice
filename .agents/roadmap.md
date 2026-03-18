@@ -63,39 +63,43 @@ This could also serve as a compelling demo: "download 10M reads from SRA, sort t
 
 ## Performance engineering
 
-The primary goal of `dryice` is extremely high throughput. The current implementation is correct but largely naive — it uses the simplest possible approach at every level. That was the right starting point, but it leaves substantial room for improvement.
+The primary goal of `dryice` is extremely high throughput. The first round of performance work has already delivered major improvements: eliminating per-record heap allocations via `encode_into`/`decode_into` codec traits and making `BlockBuilder` generic over codec types to eliminate function pointer indirection produced a 208% write throughput improvement and 128% round-trip improvement. The raw write path now runs at 15.7 GiB/s and the raw round-trip at 5.7 GiB/s — nearly 2x faster than FASTQ text.
 
-This section tracks the ongoing effort to find, implement, test, and finalize performance improvements that push the format toward bare-metal throughput. Some of these will come at the expense of readability or internal simplicity, and that's acceptable. The library's reason for existing is speed.
+This section tracks the ongoing effort to find, implement, test, and finalize further performance improvements that push the format toward bare-metal throughput. Some of these will come at the expense of readability or internal simplicity, and that's acceptable. The library's reason for existing is speed.
+
+### Completed optimizations
+
+- codec traits changed from `encode() -> Vec<u8>` to `encode_into(&mut Vec<u8>)`, eliminating 3 heap allocations per record on write and enabling buffer reuse on read
+- `BlockBuilder` made generic over `S, Q, N` codec types, eliminating function pointer indirection and enabling full inlining of codec encode paths by the compiler
+- allocating `encode()`/`decode()` convenience methods retained as default trait methods for ergonomic use outside the hot path
 
 ### Prior art and technique collection
 
-Before optimizing, we need to study what the fastest serialization and I/O libraries actually do. Relevant prior art includes:
+Further optimization should study what the fastest serialization and I/O libraries actually do. Relevant prior art includes:
 
 - `cap'n proto` and `flatbuffers` for zero-copy serialization patterns
 - `arrow` and `parquet` for columnar batch I/O techniques
 - `lz4` and `zstd` for fast compression integration patterns
 - `io_uring` and `aio` for async I/O submission on Linux
 - SIMD-accelerated parsing and encoding techniques (building on what `bitnuc` already provides)
-- buffer pooling and arena allocation patterns to reduce allocator pressure
+- buffer pooling and arena allocation patterns to further reduce allocator pressure
 - cache-line-aware data layout for hot-path structures
 
 ### Write path optimization
 
-The write path currently copies record data into block-owned `Vec<u8>` buffers and then writes the assembled block. Potential improvements include:
+The write path now encodes directly into block-owned buffers via `encode_into` with no intermediate allocations. Remaining potential improvements include:
 
-- pre-allocated buffer pools that avoid repeated allocation/deallocation across blocks
-- direct-to-output encoding that skips the intermediate block buffer where possible
 - vectored writes (`writev`) to reduce syscall overhead when flushing blocks
 - block-level parallelism: encoding the next block on a background thread while the current one flushes
+- pre-sizing block buffers based on estimated record sizes to reduce `Vec` growth reallocation
 
 ### Read path optimization
 
-The read path currently reads each block into owned buffers and decodes eagerly on `advance()`. Potential improvements include:
+The read path now reuses decode buffers across records via `decode_into`. Remaining potential improvements include:
 
 - lazy decoding: only decode a field when it's actually accessed, not on every `advance()`
 - prefetching: start reading the next block while the current one is being consumed
 - SIMD-accelerated index parsing for the fixed-width record index entries
-- reducing per-block allocation by reusing decode buffers across blocks (partially done already for the sequence decode buffer, but could be extended)
 
 ### Codec-level optimization
 

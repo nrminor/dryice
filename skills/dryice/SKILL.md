@@ -172,8 +172,8 @@ impl SequenceCodec for MyCodec {
     const TYPE_TAG: [u8; 16] = *b"myorg:seq:custom";
     const LOSSY: bool = false;
 
-    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> { /* ... */ }
-    fn decode(encoded: &[u8], original_len: usize) -> Result<Vec<u8>, DryIceError> { /* ... */ }
+    fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> { /* ... */ }
+    fn decode_into(encoded: &[u8], original_len: usize, output: &mut Vec<u8>) -> Result<(), DryIceError> { /* ... */ }
 }
 ```
 
@@ -190,7 +190,7 @@ impl NameCodec for MyNameCodec {
     const LOSSY: bool = false;
     type Decoded = MyDecodedName;
 
-    fn encode(name: &[u8]) -> Result<Vec<u8>, DryIceError> { /* ... */ }
+    fn encode_into(name: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> { /* ... */ }
     fn decode(encoded: &[u8], original_len: usize) -> Result<MyDecodedName, DryIceError> { /* ... */ }
     fn as_bytes(decoded: &MyDecodedName) -> &[u8] { /* ... */ }
 }

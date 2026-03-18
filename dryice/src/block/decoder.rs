@@ -10,6 +10,9 @@ use super::index::RecordIndexEntry;
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
 const INDEX_ENTRY_SIZE: usize = 24;
 
+/// Function pointer type for codec decode-into operations.
+type DecodeFn = fn(&[u8], usize, &mut Vec<u8>) -> Result<(), DryIceError>;
+
 /// Decodes records from a single parsed block.
 ///
 /// Holds the block header, parsed index, and raw section bytes.
@@ -115,9 +118,9 @@ impl BlockDecoder {
     /// Advance to the next record in this block.
     pub fn advance(
         &mut self,
-        seq_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
-        qual_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
-        name_decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
+        seq_decode_fn: DecodeFn,
+        qual_decode_fn: DecodeFn,
+        name_decode_fn: DecodeFn,
     ) -> Result<bool, DryIceError> {
         if self.started {
             self.cursor += 1;
@@ -136,28 +139,22 @@ impl BlockDecoder {
         Ok(true)
     }
 
-    fn decode_current_name(
-        &mut self,
-        decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
-    ) -> Result<(), DryIceError> {
+    fn decode_current_name(&mut self, decode_fn: DecodeFn) -> Result<(), DryIceError> {
         if let Some(names) = &self.name_bytes {
             let entry = &self.index[self.cursor];
             let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
             let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
             let encoded = &names[start..start + len];
 
-            let original_len = len;
-            self.decoded_name_buf = decode_fn(encoded, original_len)?;
+            self.decoded_name_buf.clear();
+            decode_fn(encoded, len, &mut self.decoded_name_buf)?;
         } else {
             self.decoded_name_buf.clear();
         }
         Ok(())
     }
 
-    fn decode_current_sequence(
-        &mut self,
-        decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
-    ) -> Result<(), DryIceError> {
+    fn decode_current_sequence(&mut self, decode_fn: DecodeFn) -> Result<(), DryIceError> {
         let entry = &self.index[self.cursor];
         let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
         let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
@@ -165,14 +162,12 @@ impl BlockDecoder {
 
         let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
 
-        self.decoded_sequence_buf = decode_fn(encoded, original_len)?;
+        self.decoded_sequence_buf.clear();
+        decode_fn(encoded, original_len, &mut self.decoded_sequence_buf)?;
         Ok(())
     }
 
-    fn decode_current_quality(
-        &mut self,
-        decode_fn: fn(&[u8], usize) -> Result<Vec<u8>, DryIceError>,
-    ) -> Result<(), DryIceError> {
+    fn decode_current_quality(&mut self, decode_fn: DecodeFn) -> Result<(), DryIceError> {
         if let Some(quals) = &self.quality_bytes {
             let entry = &self.index[self.cursor];
             let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
@@ -181,7 +176,8 @@ impl BlockDecoder {
 
             let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
 
-            self.decoded_quality_buf = decode_fn(encoded, original_len)?;
+            self.decoded_quality_buf.clear();
+            decode_fn(encoded, original_len, &mut self.decoded_quality_buf)?;
         } else {
             self.decoded_quality_buf.clear();
         }

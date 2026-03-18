@@ -1,10 +1,13 @@
 //! Block assembly from incoming records.
 
+use std::marker::PhantomData;
+
 use crate::{
     block::{
         header::{BlockHeader, ByteRange},
-        name::OmittedNameCodec,
-        quality::OmittedQualityCodec,
+        name::{NameCodec, OmittedNameCodec},
+        quality::{OmittedQualityCodec, QualityCodec},
+        sequence::SequenceCodec,
     },
     error::DryIceError,
     format,
@@ -23,36 +26,30 @@ fn to_u32(value: usize, field: &'static str) -> Result<u32, DryIceError> {
 
 /// Configuration needed to construct a [`BlockBuilder`].
 pub(crate) struct BlockBuilderConfig {
-    pub sequence_codec_tag: [u8; 16],
-    pub quality_codec_tag: [u8; 16],
-    pub name_codec_tag: [u8; 16],
     pub record_key_width: Option<u16>,
     pub record_key_tag: Option<[u8; 16]>,
     pub target_records: usize,
-    pub sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
-    pub quality_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
-    pub name_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
 }
 
 /// Accumulates records into a single block's worth of data.
-pub(crate) struct BlockBuilder {
+///
+/// Generic over sequence, quality, and name codec types for full
+/// inlining of codec encode paths — no function pointer indirection.
+pub(crate) struct BlockBuilder<S: SequenceCodec, Q: QualityCodec, N: NameCodec> {
     index: Vec<RecordIndexEntry>,
     name_bytes: Vec<u8>,
     sequence_bytes: Vec<u8>,
     quality_bytes: Vec<u8>,
     record_key_bytes: Option<Vec<u8>>,
-    sequence_codec_tag: [u8; 16],
-    quality_codec_tag: [u8; 16],
-    name_codec_tag: [u8; 16],
     record_key_width: u16,
     record_key_tag: [u8; 16],
     target_records: usize,
-    sequence_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
-    quality_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
-    name_encode_fn: fn(&[u8]) -> Result<Vec<u8>, DryIceError>,
+    _codec: PhantomData<S>,
+    _quality: PhantomData<Q>,
+    _name: PhantomData<N>,
 }
 
-impl BlockBuilder {
+impl<S: SequenceCodec, Q: QualityCodec, N: NameCodec> BlockBuilder<S, Q, N> {
     /// Create a new block builder from the given configuration.
     pub fn new(config: &BlockBuilderConfig) -> Self {
         Self {
@@ -61,15 +58,12 @@ impl BlockBuilder {
             sequence_bytes: Vec::new(),
             quality_bytes: Vec::new(),
             record_key_bytes: config.record_key_width.map(|_| Vec::new()),
-            sequence_codec_tag: config.sequence_codec_tag,
-            quality_codec_tag: config.quality_codec_tag,
-            name_codec_tag: config.name_codec_tag,
             record_key_width: config.record_key_width.unwrap_or(0),
             record_key_tag: config.record_key_tag.unwrap_or([0; 16]),
             target_records: config.target_records,
-            sequence_encode_fn: config.sequence_encode_fn,
-            quality_encode_fn: config.quality_encode_fn,
-            name_encode_fn: config.name_encode_fn,
+            _codec: PhantomData,
+            _quality: PhantomData,
+            _name: PhantomData,
         }
     }
 
@@ -117,17 +111,23 @@ impl BlockBuilder {
         let sequence_offset = to_u32(self.sequence_bytes.len(), "sequence section offset")?;
         let quality_offset = to_u32(self.quality_bytes.len(), "quality section offset")?;
 
-        let encoded_name = (self.name_encode_fn)(name)?;
-        let name_len = to_u32(encoded_name.len(), "encoded name length")?;
-        self.name_bytes.extend_from_slice(&encoded_name);
+        let name_start = self.name_bytes.len();
+        N::encode_into(name, &mut self.name_bytes)?;
+        let name_len = to_u32(self.name_bytes.len() - name_start, "encoded name length")?;
 
-        let encoded_seq = (self.sequence_encode_fn)(raw_sequence)?;
-        let encoded_sequence_len = to_u32(encoded_seq.len(), "encoded sequence length")?;
-        self.sequence_bytes.extend_from_slice(&encoded_seq);
+        let seq_start = self.sequence_bytes.len();
+        S::encode_into(raw_sequence, &mut self.sequence_bytes)?;
+        let encoded_sequence_len = to_u32(
+            self.sequence_bytes.len() - seq_start,
+            "encoded sequence length",
+        )?;
 
-        let encoded_qual = (self.quality_encode_fn)(quality)?;
-        let encoded_quality_len = to_u32(encoded_qual.len(), "encoded quality length")?;
-        self.quality_bytes.extend_from_slice(&encoded_qual);
+        let qual_start = self.quality_bytes.len();
+        Q::encode_into(quality, &mut self.quality_bytes)?;
+        let encoded_quality_len = to_u32(
+            self.quality_bytes.len() - qual_start,
+            "encoded quality length",
+        )?;
 
         self.index.push(RecordIndexEntry {
             name_offset,
@@ -170,16 +170,14 @@ impl BlockBuilder {
         let qualities_offset = sequences_offset + seq_len;
         let record_keys_offset = qualities_offset + qual_len;
 
-        let quality_omitted = self.quality_codec_tag
-            == <OmittedQualityCodec as crate::block::quality::QualityCodec>::TYPE_TAG;
-        let names_omitted =
-            self.name_codec_tag == <OmittedNameCodec as crate::block::name::NameCodec>::TYPE_TAG;
+        let quality_omitted = Q::TYPE_TAG == <OmittedQualityCodec as QualityCodec>::TYPE_TAG;
+        let names_omitted = N::TYPE_TAG == <OmittedNameCodec as NameCodec>::TYPE_TAG;
 
         let header = BlockHeader {
             record_count,
-            sequence_codec_tag: self.sequence_codec_tag,
-            quality_codec_tag: self.quality_codec_tag,
-            name_codec_tag: self.name_codec_tag,
+            sequence_codec_tag: S::TYPE_TAG,
+            quality_codec_tag: Q::TYPE_TAG,
+            name_codec_tag: N::TYPE_TAG,
             record_key_width: self.record_key_width,
             record_key_tag: self.record_key_tag,
             index: ByteRange {

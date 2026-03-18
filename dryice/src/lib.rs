@@ -202,12 +202,18 @@
 //!     const TYPE_TAG: [u8; 16] = *b"demo:seq:upper!!";
 //!     const LOSSY: bool = true;
 //!
-//!     fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
-//!         Ok(sequence.iter().map(u8::to_ascii_uppercase).collect())
+//!     fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
+//!         output.extend(sequence.iter().map(u8::to_ascii_uppercase));
+//!         Ok(())
 //!     }
 //!
-//!     fn decode(encoded: &[u8], _original_len: usize) -> Result<Vec<u8>, DryIceError> {
-//!         Ok(encoded.to_vec())
+//!     fn decode_into(
+//!         encoded: &[u8],
+//!         _original_len: usize,
+//!         output: &mut Vec<u8>,
+//!     ) -> Result<(), DryIceError> {
+//!         output.extend_from_slice(encoded);
+//!         Ok(())
 //!     }
 //! }
 //! ```

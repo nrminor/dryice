@@ -15,8 +15,7 @@ impl SequenceCodec for RunLengthCodec {
     const TYPE_TAG: [u8; 16] = *b"demo:seq:rle!!!!";
     const LOSSY: bool = false;
 
-    fn encode(sequence: &[u8]) -> Result<Vec<u8>, DryIceError> {
-        let mut out = Vec::new();
+    fn encode_into(sequence: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
         let mut i = 0;
         while i < sequence.len() {
             let base = sequence[i];
@@ -27,23 +26,26 @@ impl SequenceCodec for RunLengthCodec {
             {
                 count += 1;
             }
-            out.push(base);
-            out.push(count);
+            output.push(base);
+            output.push(count);
             i += usize::from(count);
         }
-        Ok(out)
+        Ok(())
     }
 
-    fn decode(encoded: &[u8], _original_len: usize) -> Result<Vec<u8>, DryIceError> {
-        let mut out = Vec::new();
+    fn decode_into(
+        encoded: &[u8],
+        _original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError> {
         for chunk in encoded.chunks_exact(2) {
             let base = chunk[0];
             let count = chunk[1];
             for _ in 0..count {
-                out.push(base);
+                output.push(base);
             }
         }
-        Ok(out)
+        Ok(())
     }
 }
 

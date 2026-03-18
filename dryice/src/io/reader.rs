@@ -174,7 +174,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R
     /// configured codecs.
     pub fn next_record(&mut self) -> Result<bool, DryIceError> {
         if let Some(block) = &mut self.current_block
-            && block.advance(S::decode, Q::decode, N::decode_to_bytes)?
+            && block.advance(S::decode_into, Q::decode_into, N::decode_to_bytes_into)?
         {
             return Ok(true);
         }
@@ -201,7 +201,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R
                 }
 
                 let mut decoder = BlockDecoder::from_header_and_reader(header, &mut self.inner)?;
-                if decoder.advance(S::decode, Q::decode, N::decode_to_bytes)? {
+                if decoder.advance(S::decode_into, Q::decode_into, N::decode_to_bytes_into)? {
                     self.current_block = Some(decoder);
                     return Ok(true);
                 }

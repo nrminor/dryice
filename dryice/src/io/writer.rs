@@ -204,18 +204,15 @@ impl<W: Write, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
 /// Writes sequencing records into the `dryice` block-oriented format.
 pub struct DryIceWriter<
     W,
-    S = RawAsciiCodec,
-    Q = RawQualityCodec,
-    N = RawNameCodec,
+    S: SequenceCodec = RawAsciiCodec,
+    Q: QualityCodec = RawQualityCodec,
+    N: NameCodec = RawNameCodec,
     K = NoRecordKey,
 > {
     inner: W,
     target_block_records: usize,
-    block_builder: BlockBuilder,
+    block_builder: BlockBuilder<S, Q, N>,
     header_written: bool,
-    _codec: PhantomData<S>,
-    _quality: PhantomData<Q>,
-    _name: PhantomData<N>,
     _key: PhantomData<K>,
 }
 
@@ -232,15 +229,9 @@ impl DryIceWriter<MissingInner, RawAsciiCodec, RawQualityCodec, RawNameCodec, No
 impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec> DryIceWriter<W, S, Q, N, NoRecordKey> {
     fn new_unkeyed(inner: W, target_block_records: usize) -> Self {
         let block_builder = BlockBuilder::new(&BlockBuilderConfig {
-            sequence_codec_tag: S::TYPE_TAG,
-            quality_codec_tag: Q::TYPE_TAG,
-            name_codec_tag: N::TYPE_TAG,
             record_key_width: None,
             record_key_tag: None,
             target_records: target_block_records,
-            sequence_encode_fn: S::encode,
-            quality_encode_fn: Q::encode,
-            name_encode_fn: N::encode,
         });
 
         Self {
@@ -248,9 +239,6 @@ impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec> DryIceWriter<W, S, Q, N
             target_block_records,
             block_builder,
             header_written: false,
-            _codec: PhantomData,
-            _quality: PhantomData,
-            _name: PhantomData,
             _key: PhantomData,
         }
     }
@@ -259,15 +247,9 @@ impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec> DryIceWriter<W, S, Q, N
 impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey> DryIceWriter<W, S, Q, N, K> {
     fn new_keyed(inner: W, target_block_records: usize) -> Self {
         let block_builder = BlockBuilder::new(&BlockBuilderConfig {
-            sequence_codec_tag: S::TYPE_TAG,
-            quality_codec_tag: Q::TYPE_TAG,
-            name_codec_tag: N::TYPE_TAG,
             record_key_width: Some(K::WIDTH),
             record_key_tag: Some(K::TYPE_TAG),
             target_records: target_block_records,
-            sequence_encode_fn: S::encode,
-            quality_encode_fn: Q::encode,
-            name_encode_fn: N::encode,
         });
 
         Self {
@@ -275,15 +257,12 @@ impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey> DryIceWri
             target_block_records,
             block_builder,
             header_written: false,
-            _codec: PhantomData,
-            _quality: PhantomData,
-            _name: PhantomData,
             _key: PhantomData,
         }
     }
 }
 
-impl<W, S, Q, N, K> DryIceWriter<W, S, Q, N, K> {
+impl<W, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceWriter<W, S, Q, N, K> {
     fn ensure_header_written(&mut self) -> Result<(), DryIceError>
     where
         W: Write,
@@ -371,7 +350,7 @@ impl<W: Write, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
     }
 }
 
-impl<W: Write, S, Q, N, K> DryIceWriter<W, S, Q, N, K> {
+impl<W: Write, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceWriter<W, S, Q, N, K> {
     /// Flush any remaining buffered records and finalize the file.
     ///
     /// # Errors

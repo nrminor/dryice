@@ -56,40 +56,38 @@ These numbers are from a single machine (Apple M-series, `target-cpu=native`) an
 
 | Format | Throughput |
 |---|---|
-| raw binary | 32.1 GiB/s |
-| FASTQ | 7.0 GiB/s |
-| **dryice raw** | **5.1 GiB/s** |
-| **dryice raw + key** | **5.0 GiB/s** |
-| gzip FASTQ | 1.9 GiB/s |
-| **dryice two-bit exact** | **1.5 GiB/s** |
+| raw binary | 32.9 GiB/s |
+| FASTQ | 31.4 GiB/s |
+| **dryice raw** | **15.7 GiB/s** |
+| gzip FASTQ | 1.8 GiB/s |
+| **dryice two-bit exact** | **1.8 GiB/s** |
 | **dryice compact** | **880 MiB/s** |
 
 ### Read throughput
 
 | Format | Throughput |
 |---|---|
-| raw binary | 32.7 GiB/s |
-| **dryice raw** | **5.2 GiB/s** |
-| **dryice raw + key** | **5.2 GiB/s** |
-| FASTQ | 3.4 GiB/s |
-| **dryice compact** | **2.6 GiB/s** |
-| gzip FASTQ | 1.3 GiB/s |
+| raw binary | 31.8 GiB/s |
+| **dryice raw** | **9.0 GiB/s** |
+| **dryice compact** | **3.5 GiB/s** |
+| FASTQ | 3.1 GiB/s |
+| gzip FASTQ | 1.2 GiB/s |
 
 ### Round-trip throughput
 
 | Format | Throughput |
 |---|---|
-| raw binary | 16.9 GiB/s |
-| FASTQ | 2.9 GiB/s |
-| **dryice raw** | **2.5 GiB/s** |
-| gzip FASTQ | 697 MiB/s |
-| **dryice compact** | **663 MiB/s** |
+| raw binary | 16.3 GiB/s |
+| **dryice raw** | **5.7 GiB/s** |
+| FASTQ | 3.0 GiB/s |
+| **dryice compact** | **721 MiB/s** |
+| gzip FASTQ | 696 MiB/s |
 
 ### What the numbers mean
 
 The raw binary baseline represents the theoretical throughput ceiling: just copying bytes with length prefixes, no structure, no indexing, no codec overhead. Everything else is measured against that ceiling.
 
-dryice raw mode is competitive with plain FASTQ text on round-trip throughput while providing structured block-oriented access, zero-copy reads, optional record keys, and a self-describing format. On reads specifically, dryice raw is significantly faster than FASTQ because the block/index structure avoids line-by-line text scanning.
+dryice raw mode is now nearly twice as fast as plain FASTQ text on round-trip throughput (5.7 GiB/s vs 3.0 GiB/s) while providing structured block-oriented access, zero-copy reads, optional record keys, and a self-describing format. On reads specifically, dryice raw is nearly 3x faster than FASTQ because the block/index structure avoids line-by-line text scanning.
 
 dryice compact mode trades throughput for a smaller footprint. It is comparable to gzip FASTQ in round-trip speed but provides random access within blocks and structured record fields rather than requiring full decompression before any record can be accessed.
 

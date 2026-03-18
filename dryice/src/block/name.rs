@@ -20,12 +20,13 @@ pub trait NameCodec: Sized {
     /// The decoded representation of a name.
     type Decoded;
 
-    /// Encode raw name bytes into the codec's format.
+    /// Encode raw name bytes, appending the encoded bytes directly
+    /// into the provided output buffer.
     ///
     /// # Errors
     ///
     /// Returns an error if the name data is invalid for this encoding.
-    fn encode(name: &[u8]) -> Result<Vec<u8>, DryIceError>;
+    fn encode_into(name: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError>;
 
     /// Decode an encoded buffer into the codec's decoded representation.
     ///
@@ -39,7 +40,19 @@ pub trait NameCodec: Sized {
     /// View the decoded name as raw bytes for use in `SeqRecordLike`.
     fn as_bytes(decoded: &Self::Decoded) -> &[u8];
 
-    /// Decode an encoded buffer directly to raw bytes.
+    /// Encode name bytes, returning a new allocated buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the name data is invalid for this encoding.
+    fn encode(name: &[u8]) -> Result<Vec<u8>, DryIceError> {
+        let mut out = Vec::new();
+        Self::encode_into(name, &mut out)?;
+        Ok(out)
+    }
+
+    /// Decode an encoded buffer directly to raw bytes, appending into
+    /// the provided output buffer.
     ///
     /// This is used internally by the block decoder to populate the
     /// name buffer without requiring knowledge of the `Decoded` type.
@@ -48,9 +61,14 @@ pub trait NameCodec: Sized {
     /// # Errors
     ///
     /// Returns an error if the encoded data is corrupt or inconsistent.
-    fn decode_to_bytes(encoded: &[u8], original_len: usize) -> Result<Vec<u8>, DryIceError> {
+    fn decode_to_bytes_into(
+        encoded: &[u8],
+        original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError> {
         let decoded = Self::decode(encoded, original_len)?;
-        Ok(Self::as_bytes(&decoded).to_vec())
+        output.extend_from_slice(Self::as_bytes(&decoded));
+        Ok(())
     }
 }
 
@@ -74,8 +92,9 @@ impl NameCodec for RawNameCodec {
     const LOSSY: bool = false;
     type Decoded = RawName;
 
-    fn encode(name: &[u8]) -> Result<Vec<u8>, DryIceError> {
-        Ok(name.to_vec())
+    fn encode_into(name: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
+        output.extend_from_slice(name);
+        Ok(())
     }
 
     fn decode(encoded: &[u8], _original_len: usize) -> Result<RawName, DryIceError> {
@@ -99,8 +118,8 @@ impl NameCodec for OmittedNameCodec {
     const LOSSY: bool = true;
     type Decoded = OmittedName;
 
-    fn encode(_name: &[u8]) -> Result<Vec<u8>, DryIceError> {
-        Ok(Vec::new())
+    fn encode_into(_name: &[u8], _output: &mut Vec<u8>) -> Result<(), DryIceError> {
+        Ok(())
     }
 
     fn decode(_encoded: &[u8], _original_len: usize) -> Result<OmittedName, DryIceError> {
@@ -167,7 +186,7 @@ impl NameCodec for SplitNameCodec {
     const LOSSY: bool = false;
     type Decoded = SplitName;
 
-    fn encode(name: &[u8]) -> Result<Vec<u8>, DryIceError> {
+    fn encode_into(name: &[u8], output: &mut Vec<u8>) -> Result<(), DryIceError> {
         let split_pos = name.iter().position(|&b| b == b' ');
 
         let (id, desc) = match split_pos {
@@ -179,12 +198,11 @@ impl NameCodec for SplitNameCodec {
             field: "name identifier length",
         })?;
 
-        let mut out = Vec::with_capacity(4 + id.len() + desc.len());
-        out.extend_from_slice(&id_len.to_le_bytes());
-        out.extend_from_slice(id);
-        out.extend_from_slice(desc);
+        output.extend_from_slice(&id_len.to_le_bytes());
+        output.extend_from_slice(id);
+        output.extend_from_slice(desc);
 
-        Ok(out)
+        Ok(())
     }
 
     fn decode(encoded: &[u8], _original_len: usize) -> Result<SplitName, DryIceError> {
