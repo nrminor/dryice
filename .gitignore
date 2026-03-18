@@ -67,6 +67,7 @@
 !/benchmarks/benches/write_throughput.rs
 !/benchmarks/benches/read_throughput.rs
 !/benchmarks/benches/round_trip.rs
+!/benchmarks/README.md
 
 # === Allowed: skills ===
 !/skills

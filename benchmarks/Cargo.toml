@@ -10,6 +10,7 @@ dryice = { path = "../dryice" }
 
 [dev-dependencies]
 criterion.workspace = true
+flate2 = "1.1.9"
 
 [[bench]]
 name = "write_throughput"
