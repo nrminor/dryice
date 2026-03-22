@@ -144,6 +144,35 @@ impl<R: Read> DryIceReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRe
     }
 }
 
+impl<R: Read> DryIceReader<R> {
+    /// Open a reader with fully user-specified codec and key type
+    /// parameters.
+    ///
+    /// This is the most general constructor, intended for library
+    /// authors who need to configure all four type parameters at
+    /// once. Most users should prefer [`new`](Self::new),
+    /// [`with_codecs`](Self::with_codecs), or the convenience
+    /// constructors instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file header is missing, corrupt,
+    /// or uses an unsupported format version.
+    pub fn open<S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>(
+        mut inner: R,
+    ) -> Result<DryIceReader<R, S, Q, N, K>, DryIceError> {
+        format::read_file_header(&mut inner)?;
+        Ok(DryIceReader {
+            inner,
+            current_block: None,
+            _codec: PhantomData,
+            _quality: PhantomData,
+            _name: PhantomData,
+            _key: PhantomData,
+        })
+    }
+}
+
 impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
     DryIceReader<R, S, Q, N, K>
 {

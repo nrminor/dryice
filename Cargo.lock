@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-benchmarks"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "dryice-bio",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-bio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bio",
  "bitnuc",
@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-node"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dryice-bio",
  "napi",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-python"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dryice-bio",
  "pyo3",
