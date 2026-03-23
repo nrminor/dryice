@@ -88,6 +88,7 @@ impl RawName {
 }
 
 /// Raw name storage. No transformation.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RawNameCodec;
 
 impl NameCodec for RawNameCodec {
@@ -115,6 +116,7 @@ impl NameCodec for RawNameCodec {
 pub struct OmittedName;
 
 /// Omit names entirely. Encodes to empty, decodes to `OmittedName`.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct OmittedNameCodec;
 
 impl NameCodec for OmittedNameCodec {
@@ -183,6 +185,7 @@ impl SplitName {
 /// ```text
 /// [id_len: u32 le] [id_bytes] [desc_bytes]
 /// ```
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SplitNameCodec;
 
 impl NameCodec for SplitNameCodec {

@@ -66,6 +66,7 @@ pub trait QualityCodec: Sized {
 }
 
 /// Raw quality score storage. No transformation.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RawQualityCodec;
 
 impl QualityCodec for RawQualityCodec {
@@ -109,6 +110,7 @@ impl QualityCodec for RawQualityCodec {
 ///
 /// Quality bytes are assumed to be Phred+33 encoded (standard Sanger/Illumina
 /// 1.8+ encoding). The binned output is also Phred+33 encoded.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BinnedQualityCodec;
 
 const PHRED_OFFSET: u8 = 33;
@@ -149,6 +151,7 @@ impl QualityCodec for BinnedQualityCodec {
 }
 
 /// An omitted quality codec that produces and expects empty quality sections.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct OmittedQualityCodec;
 
 impl QualityCodec for OmittedQualityCodec {

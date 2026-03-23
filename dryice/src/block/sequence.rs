@@ -75,6 +75,7 @@ pub trait SequenceCodec: Sized {
 
 /// Raw ASCII sequence storage. No transformation — fastest possible
 /// encode and decode, largest on-disk footprint.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RawAsciiCodec;
 
 impl SequenceCodec for RawAsciiCodec {
@@ -114,6 +115,7 @@ impl SequenceCodec for RawAsciiCodec {
 ///
 /// Lowercase canonical bases are normalized to uppercase during
 /// encoding. Ambiguous bases preserve their original byte value.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TwoBitExactCodec;
 
 impl SequenceCodec for TwoBitExactCodec {
@@ -255,6 +257,7 @@ impl SequenceCodec for TwoBitExactCodec {
 /// [ambiguity_count: u32 le]
 /// [positions: u32 le each]
 /// ```
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TwoBitLossyNCodec;
 
 impl SequenceCodec for TwoBitLossyNCodec {
