@@ -28,13 +28,13 @@ Criterion generates HTML reports in `target/criterion/`. Open `target/criterion/
 
 ## Benchmark suites
 
-There are three benchmark suites, each comparing the same set of formats.
+There are three benchmark suites.
 
-**write_throughput** measures how fast each format can serialize 10,000 records from memory into a byte buffer. This isolates encoding overhead.
+**write_throughput** measures how fast each format can serialize 10,000 records from memory into a byte buffer. This isolates encoding overhead. The write suite includes `dryice two-bit exact` explicitly so we can see the cost of sequence re-encoding alone before layering on binned qualities and split names.
 
-**read_throughput** measures how fast each format can deserialize pre-written data back into accessible record fields. For `dryice`, this uses the zero-copy `next_record()` path. For FASTQ, this uses a minimal line-based scanner (not a production parser).
+**read_throughput** measures how fast each format can deserialize pre-written data back into accessible record fields. For `dryice`, this uses the zero-copy `next_record()` path. For FASTQ, this uses a minimal line-based scanner (not a production parser). The read suite includes `dryice keyed` explicitly so we can see the overhead of record-key access on top of raw reading.
 
-**round_trip** measures the combined write-then-read cycle, which is the most representative metric for spill/reload workflows.
+**round_trip** measures the combined write-then-read cycle, which is the most representative metric for spill/reload workflows. The round-trip suite uses `dryice compact` as the full-feature representative configuration rather than enumerating every intermediate combination.
 
 ## Formats compared
 
@@ -56,41 +56,44 @@ These numbers are from a single machine (Apple M-series, `target-cpu=native`) an
 
 | Format                   | Throughput     |
 | ------------------------ | -------------- |
-| raw binary               | 32.9 GiB/s     |
-| FASTQ                    | 31.4 GiB/s     |
-| **dryice raw**           | **15.7 GiB/s** |
-| gzip FASTQ               | 1.8 GiB/s      |
-| **dryice two-bit exact** | **1.8 GiB/s**  |
-| **dryice compact**       | **880 MiB/s**  |
+| raw binary               | 33.4 GiB/s     |
+| FASTQ                    | 31.8 GiB/s     |
+| **dryice raw**           | **15.3 GiB/s** |
+| **dryice raw + key**     | **14.6 GiB/s** |
+| gzip FASTQ               | 1.82 GiB/s     |
+| **dryice two-bit exact** | **1.77 GiB/s** |
+| **dryice compact**       | **876 MiB/s**  |
 
 ### Read throughput
 
 | Format             | Throughput     |
 | ------------------ | -------------- |
-| raw binary         | 31.8 GiB/s     |
-| **dryice raw**     | **29.0 GiB/s** |
-| **dryice keyed**   | **28.1 GiB/s** |
-| **dryice compact** | **3.5 GiB/s**  |
-| FASTQ              | 3.1 GiB/s      |
-| gzip FASTQ         | 1.2 GiB/s      |
+| raw binary         | 31.6 GiB/s     |
+| **dryice raw**     | **29.2 GiB/s** |
+| **dryice keyed**   | **27.5 GiB/s** |
+| **dryice compact** | **3.34 GiB/s** |
+| FASTQ              | 3.32 GiB/s     |
+| gzip FASTQ         | 1.23 GiB/s     |
 
 ### Round-trip throughput
 
 | Format             | Throughput     |
 | ------------------ | -------------- |
-| raw binary         | 16.3 GiB/s     |
+| raw binary         | 16.1 GiB/s     |
 | **dryice raw**     | **10.0 GiB/s** |
-| FASTQ              | 3.0 GiB/s      |
-| **dryice compact** | **699 MiB/s**  |
-| gzip FASTQ         | 696 MiB/s      |
+| FASTQ              | 2.85 GiB/s     |
+| **dryice compact** | **707 MiB/s**  |
+| gzip FASTQ         | 702 MiB/s      |
 
 ### What the numbers mean
 
 The raw binary baseline represents the theoretical throughput ceiling: just copying bytes with length prefixes, no structure, no indexing, no codec overhead. Everything else is measured against that ceiling.
 
-dryice raw read throughput is now within 10% of the raw binary ceiling (29.0 vs 31.8 GiB/s) thanks to identity codec optimization that returns slices directly into block payload bytes with zero copying. On round-trip, dryice raw is over 3x faster than FASTQ text (10.0 vs 3.0 GiB/s) while providing structured block-oriented access, zero-copy reads, optional record keys, and a self-describing format.
+`dryice raw` is fast because most fields are effectively just memcpy. Names, sequences, and qualities are stored as bytes, and after the identity-codec optimization the reader can return slices directly into block payload bytes with zero copying. That is why raw read throughput is now within 10% of the raw binary ceiling (29.2 vs 31.6 GiB/s), and raw round-trip throughput is over 3x faster than FASTQ text (10.0 vs 2.85 GiB/s) while still providing structured block-oriented access, zero-copy reads, optional record keys, and a self-describing format.
 
-dryice compact mode trades throughput for a smaller footprint. It is comparable to gzip FASTQ in round-trip speed but provides random access within blocks and structured record fields rather than requiring full decompression before any record can be accessed.
+`dryice compact` is slower because it does real codec work. On writes, compact mode re-encodes sequences from raw bytes into packed 2-bit form with an ambiguity sideband, bins qualities into coarser Phred levels, and splits names into identifier/description form. On reads, compact mode currently eagerly decodes names, sequences, and qualities back into the forms expected by users before exposing each record. That extra work is exactly what the benchmark is measuring.
+
+The benchmark matrix is intentionally uneven in a few places. `dryice two-bit exact` appears in write throughput so we can isolate the cost of sequence re-encoding alone before layering on quality and name codecs. `dryice keyed` appears in read throughput so we can isolate the overhead of record-key access on top of raw reading. `dryice compact` is the full-feature representative configuration for the round-trip benchmark.
 
 Record keys add negligible overhead to both write and read paths — the key section is a simple fixed-width append/read alongside the existing payloads.
 
