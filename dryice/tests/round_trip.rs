@@ -4,6 +4,7 @@ use dryice::{
     BlockLayoutOptions, BlockSizePolicy, Bytes8Key, Bytes16Key, DryIceReader, DryIceWriter,
     DryIceWriterOptions, RawAsciiCodec, RawNameCodec, RawQualityCodec, RecordKey, SeqRecord,
     SeqRecordExt, SeqRecordLike,
+    fields::{Key, Name, Quality, Sequence},
 };
 use proptest::prelude::*;
 
@@ -241,6 +242,96 @@ fn iterator_round_trip_multiple_blocks() {
 fn iterator_round_trip_empty_file() {
     let read_back = round_trip_iterator(&[], 100);
     assert!(read_back.is_empty());
+}
+
+#[test]
+fn selected_reader_sequence_only_scan() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"####".to_vec()).expect("valid record"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder().inner(&mut buf).build();
+    for record in &records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .select(Sequence)
+        .build()
+        .expect("selected reader should build");
+
+    let mut read_back = Vec::new();
+    while let Some(record) = reader.next_record().expect("next_record should succeed") {
+        read_back.push(record.sequence().to_vec());
+    }
+
+    let expected: Vec<Vec<u8>> = records.iter().map(|r| r.sequence().to_vec()).collect();
+    assert_eq!(read_back, expected);
+}
+
+#[test]
+fn selected_reader_sequence_and_key_scan() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"####".to_vec()).expect("valid record"),
+    ];
+    let keys = vec![Bytes8Key(*b"key00001"), Bytes8Key(*b"key00002")];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder().inner(&mut buf).bytes8_key().build();
+    for (record, key) in records.iter().zip(keys.iter()) {
+        writer
+            .write_record_with_key(record, key)
+            .expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .bytes8_key()
+        .select(Sequence | Key)
+        .build()
+        .expect("selected keyed reader should build");
+
+    let mut read_sequences = Vec::new();
+    let mut read_keys = Vec::new();
+    while let Some(record) = reader.next_record().expect("next_record should succeed") {
+        read_sequences.push(record.sequence().to_vec());
+        read_keys.push(record.record_key().expect("key should decode"));
+    }
+
+    let expected_sequences: Vec<Vec<u8>> = records.iter().map(|r| r.sequence().to_vec()).collect();
+    assert_eq!(read_sequences, expected_sequences);
+    assert_eq!(read_keys, keys);
+}
+
+#[test]
+fn selected_reader_all_fields_scan() {
+    let record =
+        SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder().inner(&mut buf).build();
+    writer.write_record(&record).expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .select(Name | Sequence | Quality)
+        .build()
+        .expect("selected reader should build");
+
+    let selected = reader
+        .next_record()
+        .expect("next_record should succeed")
+        .expect("record should exist");
+    assert_eq!(selected.name(), record.name());
+    assert_eq!(selected.sequence(), record.sequence());
+    assert_eq!(selected.quality(), record.quality());
 }
 
 #[test]

@@ -10,5 +10,5 @@
 mod reader;
 mod writer;
 
-pub use reader::{DryIceReader, DryIceRecords};
+pub use reader::{DryIceReader, DryIceRecords, SelectedDryIceReader, SelectedRecord};
 pub use writer::DryIceWriter;

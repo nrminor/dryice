@@ -223,6 +223,7 @@ pub mod async_io;
 mod block;
 pub mod config;
 mod error;
+pub mod fields;
 mod format;
 mod io;
 pub mod key;
@@ -239,7 +240,7 @@ pub use block::{
 };
 pub use config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions};
 pub use error::DryIceError;
-pub use io::{DryIceReader, DryIceRecords, DryIceWriter};
+pub use io::{DryIceReader, DryIceRecords, DryIceWriter, SelectedDryIceReader, SelectedRecord};
 pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};
 #[cfg(feature = "mmap")]
 pub use mmap_io::MmapDryIceReader;
