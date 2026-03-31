@@ -15,17 +15,6 @@
 !/.cargo
 !/.cargo/config.toml
 
-# === Allowed: agent configuration ===
-!/.agents
-!/.agents/finished
-!/.agents/finished/dryice-design-first-pass.md
-!/.agents/finished/dryice-rust-architecture-plan.md
-!/.agents/finished/dryice-rust-design-notebook.md
-!/.agents/finished/dryice-consolidated-work-plan.md
-!/.agents/roadmap.md
-!/.agents/bitnuc-empty-input-bug.md
-!/.agents/wrapper-design.md
-
 # === Allowed: core crate ===
 !/dryice
 !/dryice/Cargo.toml
