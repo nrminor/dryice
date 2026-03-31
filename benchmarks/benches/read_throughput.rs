@@ -24,6 +24,45 @@ fn prepare_dryice_raw(records: &[dryice::SeqRecord]) -> Vec<u8> {
     buf
 }
 
+fn prepare_dryice_two_bit_exact(records: &[dryice::SeqRecord]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .two_bit_exact()
+        .build();
+    for record in records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+    buf
+}
+
+fn prepare_dryice_binned_quality(records: &[dryice::SeqRecord]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .binned_quality()
+        .build();
+    for record in records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+    buf
+}
+
+fn prepare_dryice_split_names(records: &[dryice::SeqRecord]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .split_names()
+        .build();
+    for record in records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+    buf
+}
+
 fn prepare_dryice_compact(records: &[dryice::SeqRecord]) -> Vec<u8> {
     let mut buf = Vec::new();
     let mut writer = DryIceWriter::builder()
@@ -81,6 +120,9 @@ fn bench_read(c: &mut Criterion) {
     let fastq_file = prepare_fastq(&records);
     let fastq_gzip_file = prepare_fastq_gzip(&records);
     let dryice_raw_file = prepare_dryice_raw(&records);
+    let dryice_two_bit_exact_file = prepare_dryice_two_bit_exact(&records);
+    let dryice_binned_quality_file = prepare_dryice_binned_quality(&records);
+    let dryice_split_names_file = prepare_dryice_split_names(&records);
     let dryice_compact_file = prepare_dryice_compact(&records);
     let dryice_keyed_file = prepare_dryice_keyed(&records);
 
@@ -148,6 +190,119 @@ fn bench_read(c: &mut Criterion) {
         });
     });
 
+    group.bench_function(
+        BenchmarkId::new("dryice_two_bit_exact_seq_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader =
+                    DryIceReader::with_two_bit_exact(dryice_two_bit_exact_file.as_slice())
+                        .expect("reader should open");
+                let mut count = 0u64;
+                while reader.next_record().expect("next_record should succeed") {
+                    count += reader.sequence().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_binned_quality_quality_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::with_codecs::<
+                    dryice::RawAsciiCodec,
+                    BinnedQualityCodec,
+                    dryice::RawNameCodec,
+                >(dryice_binned_quality_file.as_slice())
+                .expect("reader should open");
+                let mut count = 0u64;
+                while reader.next_record().expect("next_record should succeed") {
+                    count += reader.quality().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_split_names_name_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::with_codecs::<
+                    dryice::RawAsciiCodec,
+                    dryice::RawQualityCodec,
+                    SplitNameCodec,
+                >(dryice_split_names_file.as_slice())
+                .expect("reader should open");
+                let mut count = 0u64;
+                while reader.next_record().expect("next_record should succeed") {
+                    count += reader.name().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_next_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::with_codecs::<
+                    TwoBitExactCodec,
+                    BinnedQualityCodec,
+                    SplitNameCodec,
+                >(dryice_compact_file.as_slice())
+                .expect("reader should open");
+                let mut count = 0u64;
+                while reader.next_record().expect("next_record should succeed") {
+                    count += 1;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_all_fields", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::with_codecs::<
+                    TwoBitExactCodec,
+                    BinnedQualityCodec,
+                    SplitNameCodec,
+                >(dryice_compact_file.as_slice())
+                .expect("reader should open");
+                let mut count = 0u64;
+                while reader.next_record().expect("next_record should succeed") {
+                    count += reader.name().len() as u64;
+                    count += reader.sequence().len() as u64;
+                    count += reader.quality().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_to_owned", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let reader = DryIceReader::with_codecs::<
+                    TwoBitExactCodec,
+                    BinnedQualityCodec,
+                    SplitNameCodec,
+                >(dryice_compact_file.as_slice())
+                .expect("reader should open");
+                let records = reader
+                    .into_records()
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("records should decode");
+                records.len() as u64
+            });
+        },
+    );
+
     group.bench_function(BenchmarkId::new("dryice_keyed", RECORD_COUNT), |b| {
         b.iter(|| {
             let mut reader = DryIceReader::with_bytes8_key(dryice_keyed_file.as_slice())
@@ -160,6 +315,22 @@ fn bench_read(c: &mut Criterion) {
             count
         });
     });
+
+    group.bench_function(
+        BenchmarkId::new("dryice_keyed_key_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::with_bytes8_key(dryice_keyed_file.as_slice())
+                    .expect("reader should open");
+                let mut count = 0u64;
+                while reader.next_record().expect("next_record should succeed") {
+                    let key = reader.record_key().expect("key should decode");
+                    count += key.0.len() as u64;
+                }
+                count
+            });
+        },
+    );
 
     group.finish();
 }

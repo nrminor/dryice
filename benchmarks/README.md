@@ -32,7 +32,7 @@ There are three benchmark suites.
 
 **write_throughput** measures how fast each format can serialize 10,000 records from memory into a byte buffer. This isolates encoding overhead. The write suite includes `dryice two-bit exact` explicitly so we can see the cost of sequence re-encoding alone before layering on binned qualities and split names.
 
-**read_throughput** measures how fast each format can deserialize pre-written data back into accessible record fields. For `dryice`, this uses the zero-copy `next_record()` path. For FASTQ, this uses a minimal line-based scanner (not a production parser). The read suite includes `dryice keyed` explicitly so we can see the overhead of record-key access on top of raw reading.
+**read_throughput** measures how fast each format can deserialize pre-written data back into accessible record fields. For `dryice`, this uses the `next_record()` path and now includes a small attribution-oriented submatrix so we can separate codec costs from access-pattern costs. For FASTQ, this uses a minimal line-based scanner (not a production parser).
 
 **round_trip** measures the combined write-then-read cycle, which is the most representative metric for spill/reload workflows. The round-trip suite uses `dryice compact` as the full-feature representative configuration rather than enumerating every intermediate combination.
 
@@ -47,6 +47,20 @@ There are three benchmark suites.
 | dryice two-bit exact | `dryice` with `TwoBitExactCodec` for sequences, raw quality and names.                                                                         |
 | dryice compact       | `dryice` with `TwoBitExactCodec` + `BinnedQualityCodec` + `SplitNameCodec`. Full compact configuration.                                        |
 | dryice raw + key     | `dryice` raw codecs with an 8-byte `Bytes8Key` record key.                                                                                     |
+
+### Read attribution cases
+
+The read suite keeps the headline comparisons above, but also adds a small set of dryice-specific diagnostic cases:
+
+- `dryice_two_bit_exact_seq_only` isolates sequence decode cost without name/quality codec work
+- `dryice_binned_quality_quality_only` isolates quality decode/access cost
+- `dryice_split_names_name_only` isolates split-name decode/access cost
+- `dryice_compact_next_only` measures block/index traversal with no field access
+- `dryice_compact_all_fields` measures compact-mode read throughput when all borrowed fields are touched
+- `dryice_compact_to_owned` measures the fully materialized owned-record path
+- `dryice_keyed_key_only` isolates record-key access overhead from field access
+
+This submatrix exists to make future optimization work easier to justify. In particular, it gives us a clean before/after harness for changes like lazy decoding, where the interesting question is not just whether `dryice compact` gets faster in the aggregate, but which specific access patterns benefit.
 
 ## Early results
 
@@ -93,7 +107,7 @@ The raw binary baseline represents the theoretical throughput ceiling: just copy
 
 `dryice compact` is slower because it does real codec work. On writes, compact mode re-encodes sequences from raw bytes into packed 2-bit form with an ambiguity sideband, bins qualities into coarser Phred levels, and splits names into identifier/description form. On reads, compact mode currently eagerly decodes names, sequences, and qualities back into the forms expected by users before exposing each record. That extra work is exactly what the benchmark is measuring.
 
-The benchmark matrix is intentionally uneven in a few places. `dryice two-bit exact` appears in write throughput so we can isolate the cost of sequence re-encoding alone before layering on quality and name codecs. `dryice keyed` appears in read throughput so we can isolate the overhead of record-key access on top of raw reading. `dryice compact` is the full-feature representative configuration for the round-trip benchmark.
+The benchmark matrix is intentionally uneven in a few places. `dryice two-bit exact` appears in write throughput so we can isolate the cost of sequence re-encoding alone before layering on quality and name codecs. The read suite now adds a few diagnostic dryice-only cases so we can attribute costs more honestly instead of bundling every codec and access pattern into one `compact` number. `dryice compact` is still the full-feature representative configuration for the round-trip benchmark.
 
 Record keys add negligible overhead to both write and read paths — the key section is a simple fixed-width append/read alongside the existing payloads.
 
