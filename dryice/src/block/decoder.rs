@@ -1,8 +1,10 @@
 //! Block decoding and record extraction.
 
 use crate::{
+    NameCodec, QualityCodec, SequenceCodec,
     block::header::{BlockHeader, ByteRange},
     error::DryIceError,
+    fields::SelectionPlan,
 };
 
 use super::index::RecordIndexEntry;
@@ -10,23 +12,20 @@ use super::index::RecordIndexEntry;
 /// Size of a serialized [`RecordIndexEntry`] in bytes (6 × u32).
 const INDEX_ENTRY_SIZE: usize = 24;
 
-/// Function pointer type for codec decode-into operations.
-type DecodeFn = fn(&[u8], usize, &mut Vec<u8>) -> Result<(), DryIceError>;
-
-/// Tracks which codecs are identity (raw bytes = decoded bytes).
-#[derive(Clone, Copy, Default)]
-struct CodecIdentity {
-    name: bool,
-    sequence: bool,
-    quality: bool,
+/// Prepared-state for one field of the current record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PreparedFieldState {
+    #[default]
+    Missing,
+    Identity,
+    Decoded,
 }
 
 /// Decodes records from a single parsed block.
 ///
 /// Holds the block header, parsed index, and raw section bytes.
-/// Sequence, quality, and name decoding is driven by the reader,
-/// which knows the codec types statically and passes their decode
-/// functions.
+/// Field preparation is driven by the reader, which knows the selected
+/// field set and codec types statically.
 pub(crate) struct BlockDecoder {
     header: BlockHeader,
     index: Vec<RecordIndexEntry>,
@@ -39,7 +38,9 @@ pub(crate) struct BlockDecoder {
     decoded_name_buf: Vec<u8>,
     decoded_sequence_buf: Vec<u8>,
     decoded_quality_buf: Vec<u8>,
-    identity: CodecIdentity,
+    name_state: PreparedFieldState,
+    sequence_state: PreparedFieldState,
+    quality_state: PreparedFieldState,
 }
 
 fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
@@ -121,132 +122,265 @@ impl BlockDecoder {
             decoded_name_buf: Vec::new(),
             decoded_sequence_buf: Vec::new(),
             decoded_quality_buf: Vec::new(),
-            identity: CodecIdentity::default(),
+            name_state: PreparedFieldState::Missing,
+            sequence_state: PreparedFieldState::Missing,
+            quality_state: PreparedFieldState::Missing,
         })
     }
 
-    /// Advance to the next record in this block.
-    pub fn advance(
-        &mut self,
-        seq_decode_fn: DecodeFn,
-        qual_decode_fn: DecodeFn,
-        name_decode_fn: DecodeFn,
-        seq_identity: bool,
-        qual_identity: bool,
-        name_identity: bool,
-    ) -> Result<bool, DryIceError> {
+    /// Advance to the next record in this block and prepare the fields needed by `P`.
+    pub(crate) fn advance<S, Q, N, P>(&mut self) -> Result<bool, DryIceError>
+    where
+        S: SequenceCodec,
+        Q: QualityCodec,
+        N: NameCodec,
+        P: SelectionPlan,
+    {
         if self.started {
             self.cursor += 1;
         } else {
             self.started = true;
-            self.identity = CodecIdentity {
-                name: name_identity,
-                sequence: seq_identity,
-                quality: qual_identity,
-            };
         }
 
         if self.cursor >= self.index.len() {
+            self.clear_prepared_state();
             return Ok(false);
         }
 
-        if !self.identity.name {
-            self.decode_current_name(name_decode_fn)?;
-        }
-        if !self.identity.sequence {
-            self.decode_current_sequence(seq_decode_fn)?;
-        }
-        if !self.identity.quality {
-            self.decode_current_quality(qual_decode_fn)?;
-        }
-
+        self.prepare_current_record::<S, Q, N, P>()?;
         Ok(true)
     }
 
-    fn decode_current_name(&mut self, decode_fn: DecodeFn) -> Result<(), DryIceError> {
-        if let Some(names) = &self.name_bytes {
-            let entry = &self.index[self.cursor];
-            let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
-            let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
-            let encoded = &names[start..start + len];
+    fn prepare_current_record<S, Q, N, P>(&mut self) -> Result<(), DryIceError>
+    where
+        S: SequenceCodec,
+        Q: QualityCodec,
+        N: NameCodec,
+        P: SelectionPlan,
+    {
+        self.clear_prepared_state();
 
-            self.decoded_name_buf.clear();
-            decode_fn(encoded, len, &mut self.decoded_name_buf)?;
-        } else {
-            self.decoded_name_buf.clear();
+        if P::NEEDS_NAME {
+            self.prepare_name::<N>()?;
         }
+
+        if P::NEEDS_SEQUENCE {
+            self.prepare_sequence::<S>()?;
+        }
+
+        if P::NEEDS_QUALITY {
+            self.prepare_quality::<Q>()?;
+        }
+
         Ok(())
     }
 
-    fn decode_current_sequence(&mut self, decode_fn: DecodeFn) -> Result<(), DryIceError> {
-        let entry = &self.index[self.cursor];
+    fn clear_prepared_state(&mut self) {
+        self.decoded_name_buf.clear();
+        self.decoded_sequence_buf.clear();
+        self.decoded_quality_buf.clear();
+        self.name_state = PreparedFieldState::Missing;
+        self.sequence_state = PreparedFieldState::Missing;
+        self.quality_state = PreparedFieldState::Missing;
+    }
+
+    fn current_entry(&self) -> &RecordIndexEntry {
+        &self.index[self.cursor]
+    }
+
+    fn encoded_name_bytes(&self, entry: &RecordIndexEntry) -> Result<&[u8], DryIceError> {
+        let names = self
+            .name_bytes
+            .as_ref()
+            .ok_or(DryIceError::MissingRequiredSection { section: "names" })?;
+        let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
+        let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
+        names
+            .get(start..start + len)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "name bytes out of range",
+            })
+    }
+
+    fn encoded_sequence_bytes(&self, entry: &RecordIndexEntry) -> Result<&[u8], DryIceError> {
         let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
         let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
-        let encoded = &self.sequence_bytes[start..start + len];
+        self.sequence_bytes
+            .get(start..start + len)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "sequence bytes out of range",
+            })
+    }
 
+    fn encoded_quality_bytes(&self, entry: &RecordIndexEntry) -> Result<&[u8], DryIceError> {
+        let qualities = self
+            .quality_bytes
+            .as_ref()
+            .ok_or(DryIceError::MissingRequiredSection {
+                section: "qualities",
+            })?;
+        let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+        let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        qualities
+            .get(start..start + len)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "quality bytes out of range",
+            })
+    }
+
+    fn prepare_name<N>(&mut self) -> Result<(), DryIceError>
+    where
+        N: NameCodec,
+    {
+        if self.name_bytes.is_none() {
+            self.name_state = PreparedFieldState::Decoded;
+            return Ok(());
+        }
+
+        if N::IS_IDENTITY {
+            self.name_state = PreparedFieldState::Identity;
+            return Ok(());
+        }
+
+        let entry = *self.current_entry();
+        let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
+        let original_len = usize::try_from(entry.name_len).expect("u32 fits in usize");
+        let end = start + original_len;
+        let names = self
+            .name_bytes
+            .as_ref()
+            .ok_or(DryIceError::MissingRequiredSection { section: "names" })?;
+        let encoded = names
+            .get(start..end)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "name bytes out of range",
+            })?;
+        let output = &mut self.decoded_name_buf;
+        output.clear();
+        N::decode_to_bytes_into(encoded, original_len, output)?;
+        self.name_state = PreparedFieldState::Decoded;
+        Ok(())
+    }
+
+    fn prepare_sequence<S>(&mut self) -> Result<(), DryIceError>
+    where
+        S: SequenceCodec,
+    {
+        if S::IS_IDENTITY {
+            self.sequence_state = PreparedFieldState::Identity;
+            return Ok(());
+        }
+
+        let entry = *self.current_entry();
+        let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
+        let encoded_len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
         let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        let end = start + encoded_len;
+        let encoded =
+            self.sequence_bytes
+                .get(start..end)
+                .ok_or(DryIceError::CorruptRecordIndex {
+                    entry: self.cursor,
+                    message: "sequence bytes out of range",
+                })?;
 
-        self.decoded_sequence_buf.clear();
-        decode_fn(encoded, original_len, &mut self.decoded_sequence_buf)?;
+        let output = &mut self.decoded_sequence_buf;
+        output.clear();
+        S::decode_into(encoded, original_len, output)?;
+        self.sequence_state = PreparedFieldState::Decoded;
         Ok(())
     }
 
-    fn decode_current_quality(&mut self, decode_fn: DecodeFn) -> Result<(), DryIceError> {
-        if let Some(quals) = &self.quality_bytes {
-            let entry = &self.index[self.cursor];
-            let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
-            let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
-            let encoded = &quals[start..start + len];
-
-            let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
-
-            self.decoded_quality_buf.clear();
-            decode_fn(encoded, original_len, &mut self.decoded_quality_buf)?;
-        } else {
-            self.decoded_quality_buf.clear();
+    fn prepare_quality<Q>(&mut self) -> Result<(), DryIceError>
+    where
+        Q: QualityCodec,
+    {
+        if self.quality_bytes.is_none() {
+            self.quality_state = PreparedFieldState::Decoded;
+            return Ok(());
         }
+
+        if Q::IS_IDENTITY {
+            self.quality_state = PreparedFieldState::Identity;
+            return Ok(());
+        }
+
+        let entry = *self.current_entry();
+        let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+        let encoded_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        let end = start + encoded_len;
+        let qualities = self
+            .quality_bytes
+            .as_ref()
+            .ok_or(DryIceError::MissingRequiredSection {
+                section: "qualities",
+            })?;
+        let encoded = qualities
+            .get(start..end)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "quality bytes out of range",
+            })?;
+
+        let output = &mut self.decoded_quality_buf;
+        output.clear();
+        Q::decode_into(encoded, original_len, output)?;
+        self.quality_state = PreparedFieldState::Decoded;
         Ok(())
     }
 
-    /// The current record's decoded name bytes.
+    /// The current record's prepared name bytes.
     pub fn current_name(&self) -> &[u8] {
-        if self.identity.name {
-            if let Some(names) = &self.name_bytes {
-                let entry = &self.index[self.cursor];
-                let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
-                let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
-                return &names[start..start + len];
-            }
-            &[]
-        } else {
-            &self.decoded_name_buf
+        match self.name_state {
+            PreparedFieldState::Missing => {
+                panic!("name() called for a record whose name was not prepared")
+            },
+            PreparedFieldState::Identity => {
+                if self.name_bytes.is_some() {
+                    self.encoded_name_bytes(self.current_entry())
+                        .expect("valid identity name slice")
+                } else {
+                    &[]
+                }
+            },
+            PreparedFieldState::Decoded => &self.decoded_name_buf,
         }
     }
 
-    /// The current record's decoded sequence.
+    /// The current record's prepared sequence bytes.
     pub fn current_sequence(&self) -> &[u8] {
-        if self.identity.sequence {
-            let entry = &self.index[self.cursor];
-            let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
-            let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
-            &self.sequence_bytes[start..start + len]
-        } else {
-            &self.decoded_sequence_buf
+        match self.sequence_state {
+            PreparedFieldState::Missing => {
+                panic!("sequence() called for a record whose sequence was not prepared")
+            },
+            PreparedFieldState::Identity => self
+                .encoded_sequence_bytes(self.current_entry())
+                .expect("valid identity sequence slice"),
+            PreparedFieldState::Decoded => &self.decoded_sequence_buf,
         }
     }
 
-    /// The current record's decoded quality.
+    /// The current record's prepared quality bytes.
     pub fn current_quality(&self) -> &[u8] {
-        if self.identity.quality {
-            if let Some(quals) = &self.quality_bytes {
-                let entry = &self.index[self.cursor];
-                let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
-                let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
-                return &quals[start..start + len];
-            }
-            return &[];
+        match self.quality_state {
+            PreparedFieldState::Missing => {
+                panic!("quality() called for a record whose quality was not prepared")
+            },
+            PreparedFieldState::Identity => {
+                if self.quality_bytes.is_some() {
+                    self.encoded_quality_bytes(self.current_entry())
+                        .expect("valid identity quality slice")
+                } else {
+                    &[]
+                }
+            },
+            PreparedFieldState::Decoded => &self.decoded_quality_buf,
         }
-        &self.decoded_quality_buf
     }
 
     /// Verify that the block's record-key metadata matches the configured key type.

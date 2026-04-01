@@ -120,14 +120,7 @@ impl<S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> MmapDryIceReader<S, Q, 
     /// if codec tags don't match.
     pub fn next_record(&mut self) -> Result<bool, DryIceError> {
         if let Some(block) = &mut self.current_block
-            && block.advance(
-                S::decode_into,
-                Q::decode_into,
-                N::decode_to_bytes_into,
-                S::IS_IDENTITY,
-                Q::IS_IDENTITY,
-                N::IS_IDENTITY,
-            )?
+            && block.advance::<S, Q, N, crate::fields::AllFields>()?
         {
             return Ok(true);
         }
@@ -188,14 +181,7 @@ impl<S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> MmapDryIceReader<S, Q, 
             self.cursor += payload_size;
 
             let mut decoder = BlockDecoder::from_header_and_reader(header, &mut &*payload)?;
-            if decoder.advance(
-                S::decode_into,
-                Q::decode_into,
-                N::decode_to_bytes_into,
-                S::IS_IDENTITY,
-                Q::IS_IDENTITY,
-                N::IS_IDENTITY,
-            )? {
+            if decoder.advance::<S, Q, N, crate::fields::AllFields>()? {
                 self.current_block = Some(decoder);
                 return Ok(true);
             }

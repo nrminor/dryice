@@ -10,7 +10,7 @@ use crate::{
         sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
     },
     error::DryIceError,
-    fields::{HasKey, HasName, HasQuality, HasSequence, SelectionExpr},
+    fields::{AllFields, HasKey, HasName, HasQuality, HasSequence, SelectionExpr, SelectionPlan},
     format,
     key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey},
     record::{SeqRecord, SeqRecordExt, SeqRecordLike},
@@ -236,7 +236,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
     }
 }
 
-impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, F: SelectionExpr>
+impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, F: SelectionPlan>
     DryIceReaderBuilder<R, S, Q, N, NoRecordKey, ReadSelectedFields<F>>
 {
     /// Build an unkeyed selected reader.
@@ -258,7 +258,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, F: SelectionExpr>
     }
 }
 
-impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey, F: SelectionExpr>
+impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey, F: SelectionPlan>
     DryIceReaderBuilder<R, S, Q, N, K, ReadSelectedFields<F>>
 {
     /// Build a keyed selected reader.
@@ -457,13 +457,13 @@ where
     S: SequenceCodec,
     Q: QualityCodec,
     N: NameCodec,
-    F: SelectionExpr,
+    F: SelectionPlan,
 {
     /// Advance to the next selected record in the file.
     pub fn next_record(
         &mut self,
     ) -> Result<Option<SelectedRecord<'_, R, S, Q, N, K, F>>, DryIceError> {
-        if self.inner.next_record()? {
+        if self.inner.next_record_prepared::<F>()? {
             Ok(Some(SelectedRecord {
                 reader: &self.inner,
                 _fields: PhantomData,
@@ -552,57 +552,45 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
 }
 
 impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R, S, Q, N, K> {
-    /// Advance to the next record in the file.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a block header or block payload cannot be read or
-    /// decoded, or if the block's codec tags do not match the reader's
-    /// configured codecs.
-    pub fn next_record(&mut self) -> Result<bool, DryIceError> {
+    fn verify_codecs(&self, header: &crate::block::header::BlockHeader) -> Result<(), DryIceError> {
+        if header.sequence_codec_tag != S::TYPE_TAG {
+            return Err(DryIceError::SequenceCodecMismatch {
+                expected: S::TYPE_TAG,
+                found: header.sequence_codec_tag,
+            });
+        }
+        if header.quality_codec_tag != Q::TYPE_TAG {
+            return Err(DryIceError::QualityCodecMismatch {
+                expected: Q::TYPE_TAG,
+                found: header.quality_codec_tag,
+            });
+        }
+        if header.name_codec_tag != N::TYPE_TAG {
+            return Err(DryIceError::NameCodecMismatch {
+                expected: N::TYPE_TAG,
+                found: header.name_codec_tag,
+            });
+        }
+        Ok(())
+    }
+
+    fn next_record_prepared<P>(&mut self) -> Result<bool, DryIceError>
+    where
+        P: SelectionPlan,
+    {
+        let _needs_key = P::NEEDS_KEY;
+
         if let Some(block) = &mut self.current_block
-            && block.advance(
-                S::decode_into,
-                Q::decode_into,
-                N::decode_to_bytes_into,
-                S::IS_IDENTITY,
-                Q::IS_IDENTITY,
-                N::IS_IDENTITY,
-            )?
+            && block.advance::<S, Q, N, P>()?
         {
             return Ok(true);
         }
 
         loop {
             if let Some(header) = format::read_block_header(&mut self.inner)? {
-                if header.sequence_codec_tag != S::TYPE_TAG {
-                    return Err(DryIceError::SequenceCodecMismatch {
-                        expected: S::TYPE_TAG,
-                        found: header.sequence_codec_tag,
-                    });
-                }
-                if header.quality_codec_tag != Q::TYPE_TAG {
-                    return Err(DryIceError::QualityCodecMismatch {
-                        expected: Q::TYPE_TAG,
-                        found: header.quality_codec_tag,
-                    });
-                }
-                if header.name_codec_tag != N::TYPE_TAG {
-                    return Err(DryIceError::NameCodecMismatch {
-                        expected: N::TYPE_TAG,
-                        found: header.name_codec_tag,
-                    });
-                }
-
+                self.verify_codecs(&header)?;
                 let mut decoder = BlockDecoder::from_header_and_reader(header, &mut self.inner)?;
-                if decoder.advance(
-                    S::decode_into,
-                    Q::decode_into,
-                    N::decode_to_bytes_into,
-                    S::IS_IDENTITY,
-                    Q::IS_IDENTITY,
-                    N::IS_IDENTITY,
-                )? {
+                if decoder.advance::<S, Q, N, P>()? {
                     self.current_block = Some(decoder);
                     return Ok(true);
                 }
@@ -611,6 +599,17 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R
                 return Ok(false);
             }
         }
+    }
+
+    /// Advance to the next record in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a block header or block payload cannot be read or
+    /// decoded, or if the block's codec tags do not match the reader's
+    /// configured codecs.
+    pub fn next_record(&mut self) -> Result<bool, DryIceError> {
+        self.next_record_prepared::<AllFields>()
     }
 
     /// Consume this reader into an iterator of owned [`SeqRecord`] values.

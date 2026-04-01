@@ -69,6 +69,15 @@ pub struct AllFields;
 /// Marker trait implemented by field-selection expressions.
 pub trait SelectionExpr: private::Sealed + Copy {}
 
+/// Internal preparation plan derived from a selected field set.
+#[doc(hidden)]
+pub trait SelectionPlan: SelectionExpr {
+    const NEEDS_NAME: bool;
+    const NEEDS_SEQUENCE: bool;
+    const NEEDS_QUALITY: bool;
+    const NEEDS_KEY: bool;
+}
+
 macro_rules! impl_selection_expr {
     ($($ty:ty),* $(,)?) => { $(impl SelectionExpr for $ty {})* };
 }
@@ -102,6 +111,33 @@ pub trait HasQuality: SelectionExpr {}
 
 #[doc(hidden)]
 pub trait HasKey: SelectionExpr {}
+
+macro_rules! impl_selection_plan {
+    ($ty:ty, $name:expr, $sequence:expr, $quality:expr, $key:expr) => {
+        impl SelectionPlan for $ty {
+            const NEEDS_NAME: bool = $name;
+            const NEEDS_SEQUENCE: bool = $sequence;
+            const NEEDS_QUALITY: bool = $quality;
+            const NEEDS_KEY: bool = $key;
+        }
+    };
+}
+
+impl_selection_plan!(Name, true, false, false, false);
+impl_selection_plan!(Sequence, false, true, false, false);
+impl_selection_plan!(Quality, false, false, true, false);
+impl_selection_plan!(Key, false, false, false, true);
+impl_selection_plan!(NameSequence, true, true, false, false);
+impl_selection_plan!(NameQuality, true, false, true, false);
+impl_selection_plan!(NameKey, true, false, false, true);
+impl_selection_plan!(SequenceQuality, false, true, true, false);
+impl_selection_plan!(SequenceKey, false, true, false, true);
+impl_selection_plan!(QualityKey, false, false, true, true);
+impl_selection_plan!(NameSequenceQuality, true, true, true, false);
+impl_selection_plan!(NameSequenceKey, true, true, false, true);
+impl_selection_plan!(NameQualityKey, true, false, true, true);
+impl_selection_plan!(SequenceQualityKey, false, true, true, true);
+impl_selection_plan!(AllFields, true, true, true, true);
 
 macro_rules! impl_has_name {
     ($($ty:ty),* $(,)?) => { $(impl HasName for $ty {})* };
