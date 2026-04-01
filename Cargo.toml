@@ -3,7 +3,7 @@ resolver = "3"
 members = ["dryice", "benchmarks", "dryice-python", "dryice-node"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Nicholas Minor <nicholasrminor@gmail.com>"]
 edition = "2024"
 license = "MIT"
