@@ -4,7 +4,9 @@ use std::io::Read;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use dryice::{
-    BinnedQualityCodec, DryIceReader, DryIceWriter, SeqRecordLike, SplitNameCodec, TwoBitExactCodec,
+    BinnedQualityCodec, DryIceReader, DryIceWriter, SeqRecordLike, SplitNameCodec,
+    TwoBitExactCodec,
+    fields::{Key, Name, Quality, Sequence},
 };
 use dryice_benchmarks::{
     compute_sort_key, generate_records, payload_size, read_fastq, read_raw_binary, write_fastq,
@@ -91,6 +93,25 @@ fn prepare_dryice_keyed(records: &[dryice::SeqRecord]) -> Vec<u8> {
     buf
 }
 
+fn prepare_dryice_compact_keyed(records: &[dryice::SeqRecord]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .two_bit_exact()
+        .binned_quality()
+        .split_names()
+        .bytes8_key()
+        .build();
+    for record in records {
+        let key = compute_sort_key(record.sequence());
+        writer
+            .write_record_with_key(record, &key)
+            .expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+    buf
+}
+
 fn prepare_fastq(records: &[dryice::SeqRecord]) -> Vec<u8> {
     let mut buf = Vec::new();
     write_fastq(records, &mut buf);
@@ -125,6 +146,7 @@ fn bench_read(c: &mut Criterion) {
     let dryice_split_names_file = prepare_dryice_split_names(&records);
     let dryice_compact_file = prepare_dryice_compact(&records);
     let dryice_keyed_file = prepare_dryice_keyed(&records);
+    let dryice_compact_keyed_file = prepare_dryice_compact_keyed(&records);
 
     let mut group = c.benchmark_group("read");
     group.throughput(Throughput::Bytes(size as u64));
@@ -299,6 +321,93 @@ fn bench_read(c: &mut Criterion) {
                     .collect::<Result<Vec<_>, _>>()
                     .expect("records should decode");
                 records.len() as u64
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_selected_seq_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::builder()
+                    .inner(dryice_compact_file.as_slice())
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(Sequence)
+                    .build()
+                    .expect("selected reader should open");
+                let mut count = 0u64;
+                while let Some(record) = reader.next_record().expect("next_record should succeed") {
+                    count += record.sequence().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_selected_quality_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::builder()
+                    .inner(dryice_compact_file.as_slice())
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(Quality)
+                    .build()
+                    .expect("selected reader should open");
+                let mut count = 0u64;
+                while let Some(record) = reader.next_record().expect("next_record should succeed") {
+                    count += record.quality().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_selected_name_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::builder()
+                    .inner(dryice_compact_file.as_slice())
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(Name)
+                    .build()
+                    .expect("selected reader should open");
+                let mut count = 0u64;
+                while let Some(record) = reader.next_record().expect("next_record should succeed") {
+                    count += record.name().len() as u64;
+                }
+                count
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_compact_selected_seq_key", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut reader = DryIceReader::builder()
+                    .inner(dryice_compact_keyed_file.as_slice())
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .bytes8_key()
+                    .select(Sequence | Key)
+                    .build()
+                    .expect("selected keyed reader should open");
+                let mut count = 0u64;
+                while let Some(record) = reader.next_record().expect("next_record should succeed") {
+                    count += record.sequence().len() as u64;
+                    let key = record.record_key().expect("key should decode");
+                    count += key.0.len() as u64;
+                }
+                count
             });
         },
     );
