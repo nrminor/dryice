@@ -70,6 +70,103 @@ def test_write_and_read_with_key():
     assert records[1].key == b"sortkey2"
 
 
+def test_select_sequence_projection():
+    writer = di.WriterBuilder().two_bit_exact().binned_quality().split_names().build()
+    writer.write_record(b"read1 desc", b"ACGTACGT", b"!!!!!!!!")
+    data = writer.finish()
+
+    reader = di.open_projected(
+        data,
+        "sequence",
+        sequence_codec="two_bit_exact",
+        quality_codec="binned",
+        name_codec="split",
+    )
+    record = next(iter(reader))
+
+    assert record.sequence == b"ACGTACGT"
+    assert record.name is None
+    assert record.quality is None
+    assert record.key is None
+
+
+def test_select_quality_projection():
+    writer = di.WriterBuilder().two_bit_exact().binned_quality().split_names().build()
+    writer.write_record(b"read1 desc", b"ACGTACGT", b"!!!!!!!!")
+    data = writer.finish()
+
+    reader = di.open_projected(
+        data,
+        "quality",
+        sequence_codec="two_bit_exact",
+        quality_codec="binned",
+        name_codec="split",
+    )
+    record = next(iter(reader))
+
+    assert record.quality is not None
+    assert len(record.quality) == 8
+    assert record.name is None
+    assert record.sequence is None
+    assert record.key is None
+
+
+def test_select_name_projection():
+    writer = di.WriterBuilder().two_bit_exact().binned_quality().split_names().build()
+    writer.write_record(b"read1 desc", b"ACGTACGT", b"!!!!!!!!")
+    data = writer.finish()
+
+    reader = di.open_projected(
+        data,
+        "name",
+        sequence_codec="two_bit_exact",
+        quality_codec="binned",
+        name_codec="split",
+    )
+    record = next(iter(reader))
+
+    assert record.name == b"read1 desc"
+    assert record.sequence is None
+    assert record.quality is None
+    assert record.key is None
+
+
+def test_select_sequence_and_key_projection():
+    writer = (
+        di.WriterBuilder()
+        .two_bit_exact()
+        .binned_quality()
+        .split_names()
+        .bytes8_key()
+        .build()
+    )
+    writer.write_record_with_key(b"read1 desc", b"ACGTACGT", b"!!!!!!!!", b"sortkey!")
+    data = writer.finish()
+
+    reader = di.open_projected(
+        data,
+        "sequence+key",
+        sequence_codec="two_bit_exact",
+        quality_codec="binned",
+        name_codec="split",
+        record_key="bytes8",
+    )
+    record = next(iter(reader))
+
+    assert record.sequence == b"ACGTACGT"
+    assert record.key == b"sortkey!"
+    assert record.name is None
+    assert record.quality is None
+
+
+def test_select_rejects_unknown_field():
+    try:
+        di.open_projected(b"", "banana")
+        assert False, "should have raised"
+    except ValueError:
+        pass
+
+
 def test_empty_file():
     """Write and read an empty file."""
     writer = di.Writer.builder().build()

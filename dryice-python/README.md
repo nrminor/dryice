@@ -9,7 +9,7 @@ Python bindings for [dryice](https://github.com/nrminor/dryice), a high-throughp
 
 ```sh
 cd dryice-python
-uv run maturin develop
+.venv/bin/maturin develop
 ```
 
 ## Quick start
@@ -32,6 +32,26 @@ reader = di.Reader.open(data)
 for record in reader:
     print(record.name, record.sequence)
 ```
+
+### Selective decoding
+
+```python
+reader = di.open_projected(
+    data,
+    "sequence+key",
+    sequence_codec="two_bit_exact",
+    quality_codec="binned",
+    name_codec="split",
+    record_key="bytes8",
+)
+
+for record in reader:
+    print(record.sequence, record.key)
+    assert record.name is None
+    assert record.quality is None
+```
+
+Selective decoding changes which fields are decoded for each record. `dryice` still reads full blocks from disk, but projected readers only materialize the projection you ask for. In Python, unselected fields are exposed as `None`.
 
 ### Compact codecs
 
@@ -67,7 +87,8 @@ The package ships with type stubs (`dryice_python.pyi`) for full IDE support. Th
 
 - `Writer` / `WriterBuilder` — write records with configurable codecs and keys
 - `Reader` / `ReaderBuilder` — iterate over records with codec verification
-- `Record` — a decoded record with `name`, `sequence`, `quality`, and optional `key` fields
+- `open_projected(...)` — open a reader with selective decoding for a supported projection
+- `Record` — a decoded record with `name`, `sequence`, `quality`, and optional `key` fields; unselected fields are `None` in projected reads
 
 ## About dryice
 

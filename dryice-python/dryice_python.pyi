@@ -26,9 +26,9 @@ class Writer:
 class Record:
     """A decoded sequencing record."""
 
-    name: bytes
-    sequence: bytes
-    quality: bytes
+    name: Optional[bytes]
+    sequence: Optional[bytes]
+    quality: Optional[bytes]
     key: Optional[bytes]
 
 class ReaderBuilder:
@@ -51,3 +51,12 @@ class Reader:
     def open(data: bytes) -> Reader: ...
     def __iter__(self) -> Iterator[Record]: ...
     def __next__(self) -> Record: ...
+
+def open_projected(
+    data: bytes,
+    projection: str,
+    sequence_codec: str = "raw",
+    quality_codec: str = "raw",
+    name_codec: str = "raw",
+    record_key: str = "none",
+) -> Reader: ...

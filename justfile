@@ -96,11 +96,11 @@ prepare-push: check-all
 
 # Build and install the Python wrapper for development
 python-build:
-    cd dryice-python && uv run maturin develop
+    cd dryice-python && .venv/bin/maturin develop
 
 # Run Python wrapper tests
 python-test: python-build
-    cd dryice-python && uv run pytest tests/ -v
+    cd dryice-python && .venv/bin/pytest tests/ -v
 
 # Run all checks including Python
 check-python: check python-test

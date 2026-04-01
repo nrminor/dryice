@@ -19,7 +19,9 @@ def bio_to_dryice(bio_record: SeqRecord) -> tuple[bytes, bytes, bytes]:
     """Convert a BioPython SeqRecord to dryice field bytes."""
     name = bio_record.id.encode()
     sequence = bytes(bio_record.seq)
-    quality = bytes(q + 33 for q in bio_record.letter_annotations.get("phred_quality", []))
+    quality = bytes(
+        q + 33 for q in bio_record.letter_annotations.get("phred_quality", [])
+    )
     return name, sequence, quality
 
 
@@ -32,7 +34,9 @@ def dryice_to_bio(record: di.Record) -> SeqRecord:
         description="",
     )
     if record.quality:
-        bio_record.letter_annotations["phred_quality"] = [b - 33 for b in record.quality]
+        bio_record.letter_annotations["phred_quality"] = [
+            b - 33 for b in record.quality
+        ]
     return bio_record
 
 
@@ -87,7 +91,13 @@ def main():
         f"Compact format: {len(compact_data)} bytes ({len(compact_data) * 100 // len(data)}% of raw)"
     )
 
-    reader = di.ReaderBuilder().two_bit_exact().binned_quality().split_names().build(compact_data)
+    reader = (
+        di.ReaderBuilder()
+        .two_bit_exact()
+        .binned_quality()
+        .split_names()
+        .build(compact_data)
+    )
     compact_records = [dryice_to_bio(record) for record in reader]
 
     assert len(compact_records) == len(bio_records)
