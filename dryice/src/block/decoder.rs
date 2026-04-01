@@ -50,6 +50,12 @@ fn section_len(range: Option<ByteRange>) -> Result<usize, DryIceError> {
     })
 }
 
+fn range_len(range: ByteRange) -> Result<usize, DryIceError> {
+    usize::try_from(range.len).map_err(|_| DryIceError::CorruptBlockLayout {
+        message: "section length exceeds usize range",
+    })
+}
+
 impl BlockDecoder {
     /// Parse a block's payload from the reader, given an already-parsed block header.
     pub fn from_header_and_reader<R: std::io::Read>(
@@ -188,13 +194,87 @@ impl BlockDecoder {
         &self.index[self.cursor]
     }
 
+    fn next_entry(&self) -> Option<&RecordIndexEntry> {
+        self.index.get(self.cursor + 1)
+    }
+
+    fn encoded_name_len(&self, entry: &RecordIndexEntry) -> Result<usize, DryIceError> {
+        let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
+        let end = if let Some(next) = self.next_entry() {
+            usize::try_from(next.name_offset).expect("u32 fits in usize")
+        } else if let Some(range) = self.header.names {
+            range_len(range)?
+        } else {
+            start
+        };
+
+        end.checked_sub(start)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "name offsets are not monotonic",
+            })
+    }
+
+    fn encoded_sequence_len(&self, entry: &RecordIndexEntry) -> Result<usize, DryIceError> {
+        let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
+        let end = if let Some(next) = self.next_entry() {
+            usize::try_from(next.sequence_offset).expect("u32 fits in usize")
+        } else {
+            range_len(self.header.sequences)?
+        };
+
+        end.checked_sub(start)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "sequence offsets are not monotonic",
+            })
+    }
+
+    fn encoded_quality_len(&self, entry: &RecordIndexEntry) -> Result<usize, DryIceError> {
+        let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
+        let end = if let Some(next) = self.next_entry() {
+            usize::try_from(next.quality_offset).expect("u32 fits in usize")
+        } else if let Some(range) = self.header.qualities {
+            range_len(range)?
+        } else {
+            start
+        };
+
+        end.checked_sub(start)
+            .ok_or(DryIceError::CorruptRecordIndex {
+                entry: self.cursor,
+                message: "quality offsets are not monotonic",
+            })
+    }
+
+    fn original_name_len(&self, entry: &RecordIndexEntry) -> Result<usize, DryIceError> {
+        usize::try_from(entry.name_len).map_err(|_| DryIceError::CorruptRecordIndex {
+            entry: self.cursor,
+            message: "original name length exceeds usize range",
+        })
+    }
+
+    fn original_sequence_len(&self, entry: &RecordIndexEntry) -> Result<usize, DryIceError> {
+        usize::try_from(entry.sequence_len).map_err(|_| DryIceError::CorruptRecordIndex {
+            entry: self.cursor,
+            message: "original sequence length exceeds usize range",
+        })
+    }
+
+    fn original_quality_len(&self, entry: &RecordIndexEntry) -> Result<usize, DryIceError> {
+        usize::try_from(entry.quality_len).map_err(|_| DryIceError::CorruptRecordIndex {
+            entry: self.cursor,
+            message: "original quality length exceeds usize range",
+        })
+    }
+
     fn encoded_name_bytes(&self, entry: &RecordIndexEntry) -> Result<&[u8], DryIceError> {
         let names = self
             .name_bytes
             .as_ref()
             .ok_or(DryIceError::MissingRequiredSection { section: "names" })?;
         let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
-        let len = usize::try_from(entry.name_len).expect("u32 fits in usize");
+        let len = self.encoded_name_len(entry)?;
         names
             .get(start..start + len)
             .ok_or(DryIceError::CorruptRecordIndex {
@@ -205,7 +285,7 @@ impl BlockDecoder {
 
     fn encoded_sequence_bytes(&self, entry: &RecordIndexEntry) -> Result<&[u8], DryIceError> {
         let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
-        let len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
+        let len = self.encoded_sequence_len(entry)?;
         self.sequence_bytes
             .get(start..start + len)
             .ok_or(DryIceError::CorruptRecordIndex {
@@ -222,7 +302,7 @@ impl BlockDecoder {
                 section: "qualities",
             })?;
         let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
-        let len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        let len = self.encoded_quality_len(entry)?;
         qualities
             .get(start..start + len)
             .ok_or(DryIceError::CorruptRecordIndex {
@@ -247,8 +327,8 @@ impl BlockDecoder {
 
         let entry = *self.current_entry();
         let start = usize::try_from(entry.name_offset).expect("u32 fits in usize");
-        let original_len = usize::try_from(entry.name_len).expect("u32 fits in usize");
-        let end = start + original_len;
+        let original_len = self.original_name_len(&entry)?;
+        let end = start + self.encoded_name_len(&entry)?;
         let names = self
             .name_bytes
             .as_ref()
@@ -277,8 +357,8 @@ impl BlockDecoder {
 
         let entry = *self.current_entry();
         let start = usize::try_from(entry.sequence_offset).expect("u32 fits in usize");
-        let encoded_len = usize::try_from(entry.sequence_len).expect("u32 fits in usize");
-        let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        let encoded_len = self.encoded_sequence_len(&entry)?;
+        let original_len = self.original_sequence_len(&entry)?;
         let end = start + encoded_len;
         let encoded =
             self.sequence_bytes
@@ -311,8 +391,8 @@ impl BlockDecoder {
 
         let entry = *self.current_entry();
         let start = usize::try_from(entry.quality_offset).expect("u32 fits in usize");
-        let encoded_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
-        let original_len = usize::try_from(entry.quality_len).expect("u32 fits in usize");
+        let encoded_len = self.encoded_quality_len(&entry)?;
+        let original_len = self.original_quality_len(&entry)?;
         let end = start + encoded_len;
         let qualities = self
             .quality_bytes

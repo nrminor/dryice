@@ -2,8 +2,9 @@
 
 use dryice::{
     BinnedQualityCodec, BlockLayoutOptions, BlockSizePolicy, Bytes8Key, Bytes16Key, DryIceReader,
-    DryIceWriter, DryIceWriterOptions, QualityCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec,
-    RecordKey, SeqRecord, SeqRecordExt, SeqRecordLike, SplitNameCodec,
+    DryIceWriter, DryIceWriterOptions, OmittedQualityCodec, QualityCodec, RawAsciiCodec,
+    RawNameCodec, RawQualityCodec, RecordKey, SeqRecord, SeqRecordExt, SeqRecordLike,
+    SplitNameCodec,
     fields::{Key, Name, Quality, Sequence},
 };
 use proptest::prelude::*;
@@ -246,7 +247,7 @@ fn iterator_round_trip_empty_file() {
 
 #[test]
 fn selected_reader_sequence_only_scan() {
-    let records = vec![
+    let records = [
         SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
         SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"####".to_vec()).expect("valid record"),
     ];
@@ -275,7 +276,7 @@ fn selected_reader_sequence_only_scan() {
 
 #[test]
 fn selected_reader_sequence_and_key_scan() {
-    let records = vec![
+    let records = [
         SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),
         SeqRecord::new(b"r2".to_vec(), b"TGCA".to_vec(), b"####".to_vec()).expect("valid record"),
     ];
@@ -336,7 +337,7 @@ fn selected_reader_all_fields_scan() {
 
 #[test]
 fn selected_reader_compact_sequence_only_scan() {
-    let records = vec![
+    let records = [
         SeqRecord::new(b"r1 desc".to_vec(), b"ACGTNN".to_vec(), b"!!III#".to_vec())
             .expect("valid record"),
         SeqRecord::new(b"r2 lane".to_vec(), b"TGCARY".to_vec(), b"##JJJ$".to_vec())
@@ -457,7 +458,7 @@ fn selected_reader_compact_name_only_scan() {
 
 #[test]
 fn selected_reader_compact_sequence_and_key_scan() {
-    let records = vec![
+    let records = [
         SeqRecord::new(b"r1 desc".to_vec(), b"ACGTNN".to_vec(), b"!!III#".to_vec())
             .expect("valid record"),
         SeqRecord::new(b"r2 lane".to_vec(), b"TGCARY".to_vec(), b"##JJJ$".to_vec())
@@ -500,6 +501,43 @@ fn selected_reader_compact_sequence_and_key_scan() {
     let expected_sequences: Vec<Vec<u8>> = records.iter().map(|r| r.sequence().to_vec()).collect();
     assert_eq!(read_sequences, expected_sequences);
     assert_eq!(read_keys, keys);
+}
+
+#[test]
+fn two_bit_exact_sequence_decode_works_with_omitted_qualities() {
+    let records = vec![
+        SeqRecord::new(b"r1".to_vec(), b"ACGTNN".to_vec(), b"!!!!!!".to_vec())
+            .expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"TGCARY".to_vec(), b"######".to_vec())
+            .expect("valid record"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .two_bit_exact()
+        .omit_quality()
+        .build();
+    for record in &records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .two_bit_exact()
+        .quality_codec::<OmittedQualityCodec>()
+        .select(Sequence)
+        .build()
+        .expect("selected reader should build");
+
+    let mut read_back = Vec::new();
+    while let Some(record) = reader.next_record().expect("next_record should succeed") {
+        read_back.push(record.sequence().to_vec());
+    }
+
+    let expected: Vec<Vec<u8>> = records.iter().map(|r| r.sequence().to_vec()).collect();
+    assert_eq!(read_back, expected);
 }
 
 #[test]

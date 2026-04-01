@@ -17,15 +17,22 @@ use crate::{
 };
 
 /// Private marker type used to track a missing reader source in the builder.
+#[doc(hidden)]
 pub struct MissingInner;
 
 /// Builder-state marker for the default full-row read mode.
+#[doc(hidden)]
 pub struct ReadAllFields;
 
 /// Builder-state marker for a future selected-read mode.
+#[doc(hidden)]
 pub struct ReadSelectedFields<F>(PhantomData<F>);
 
 /// Reader type returned when a field selection is specified on the builder.
+///
+/// This reader still advances through whole records in order, but it only
+/// prepares the fields implied by the selected field set. The selected field
+/// methods then live on [`SelectedRecord`] rather than on the reader itself.
 pub struct SelectedDryIceReader<
     R,
     S = RawAsciiCodec,
@@ -39,6 +46,10 @@ pub struct SelectedDryIceReader<
 }
 
 /// Borrowed current-record view returned by a selected reader.
+///
+/// The methods available on this view are determined by the selected field set
+/// used to build the reader. If a field was not selected, no accessor for that
+/// field is available on the type.
 pub struct SelectedRecord<
     'a,
     R,
@@ -50,6 +61,43 @@ pub struct SelectedRecord<
 > {
     reader: &'a DryIceReader<R, S, Q, N, K>,
     _fields: PhantomData<F>,
+}
+
+/// Convenient alias for the borrowed current-record view returned by
+/// [`SelectedDryIceReader::next_record`].
+pub type SelectedRecordView<'a, R, S, Q, N, K, F> = SelectedRecord<'a, R, S, Q, N, K, F>;
+
+/// Convenient alias for the optional next-record return value of a selected reader.
+pub type SelectedNextRecord<'a, R, S, Q, N, K, F> =
+    Option<SelectedRecordView<'a, R, S, Q, N, K, F>>;
+
+fn verify_block_codecs<S, Q, N>(
+    header: &crate::block::header::BlockHeader,
+) -> Result<(), DryIceError>
+where
+    S: SequenceCodec,
+    Q: QualityCodec,
+    N: NameCodec,
+{
+    if header.sequence_codec_tag != S::TYPE_TAG {
+        return Err(DryIceError::SequenceCodecMismatch {
+            expected: S::TYPE_TAG,
+            found: header.sequence_codec_tag,
+        });
+    }
+    if header.quality_codec_tag != Q::TYPE_TAG {
+        return Err(DryIceError::QualityCodecMismatch {
+            expected: Q::TYPE_TAG,
+            found: header.quality_codec_tag,
+        });
+    }
+    if header.name_codec_tag != N::TYPE_TAG {
+        return Err(DryIceError::NameCodecMismatch {
+            expected: N::TYPE_TAG,
+            found: header.name_codec_tag,
+        });
+    }
+    Ok(())
 }
 
 /// Builder for [`DryIceReader`].
@@ -97,11 +145,11 @@ impl<S, Q, N, K, M> DryIceReaderBuilder<MissingInner, S, Q, N, K, M> {
     pub fn inner<R>(self, inner: R) -> DryIceReaderBuilder<R, S, Q, N, K, M> {
         DryIceReaderBuilder {
             inner,
-            _codec: PhantomData,
-            _quality: PhantomData,
-            _name: PhantomData,
-            _key: PhantomData,
-            _mode: PhantomData,
+            _codec: self._codec,
+            _quality: self._quality,
+            _name: self._name,
+            _key: self._key,
+            _mode: self._mode,
         }
     }
 }
@@ -185,7 +233,13 @@ impl<R, S, Q, N, M> DryIceReaderBuilder<R, S, Q, N, NoRecordKey, M> {
 }
 
 impl<R, S, Q, N, K> DryIceReaderBuilder<R, S, Q, N, K, ReadAllFields> {
-    /// Configure a future selected-read plan.
+    /// Configure a selected-decoding projection for reads built from this builder.
+    ///
+    /// The resulting reader still reads full blocks from disk, but it will only
+    /// decode the fields named in `fields` for each record it advances through.
+    /// This is useful for intermediate scan-style passes that need only a subset
+    /// of each record, such as sequence-only filtering or sequence-plus-key
+    /// partitioning.
     #[must_use]
     pub fn select<F: SelectionExpr>(
         self,
@@ -460,9 +514,13 @@ where
     F: SelectionPlan,
 {
     /// Advance to the next selected record in the file.
-    pub fn next_record(
-        &mut self,
-    ) -> Result<Option<SelectedRecord<'_, R, S, Q, N, K, F>>, DryIceError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the next block header or payload cannot be read or
+    /// decoded, or if the on-disk codec tags do not match the reader's
+    /// configured codecs.
+    pub fn next_record(&mut self) -> Result<SelectedNextRecord<'_, R, S, Q, N, K, F>, DryIceError> {
         if self.inner.next_record_prepared::<F>()? {
             Ok(Some(SelectedRecord {
                 reader: &self.inner,
@@ -474,7 +532,7 @@ where
     }
 }
 
-impl<'a, R, S, Q, N, K, F> SelectedRecord<'a, R, S, Q, N, K, F>
+impl<R, S, Q, N, K, F> SelectedRecord<'_, R, S, Q, N, K, F>
 where
     R: Read,
     S: SequenceCodec,
@@ -483,12 +541,13 @@ where
     F: SelectionExpr + HasName,
 {
     /// Borrow the selected record name.
+    #[must_use]
     pub fn name(&self) -> &[u8] {
         self.reader.name()
     }
 }
 
-impl<'a, R, S, Q, N, K, F> SelectedRecord<'a, R, S, Q, N, K, F>
+impl<R, S, Q, N, K, F> SelectedRecord<'_, R, S, Q, N, K, F>
 where
     R: Read,
     S: SequenceCodec,
@@ -497,12 +556,13 @@ where
     F: SelectionExpr + HasSequence,
 {
     /// Borrow the selected record sequence.
+    #[must_use]
     pub fn sequence(&self) -> &[u8] {
         self.reader.sequence()
     }
 }
 
-impl<'a, R, S, Q, N, K, F> SelectedRecord<'a, R, S, Q, N, K, F>
+impl<R, S, Q, N, K, F> SelectedRecord<'_, R, S, Q, N, K, F>
 where
     R: Read,
     S: SequenceCodec,
@@ -511,12 +571,13 @@ where
     F: SelectionExpr + HasQuality,
 {
     /// Borrow the selected record quality.
+    #[must_use]
     pub fn quality(&self) -> &[u8] {
         self.reader.quality()
     }
 }
 
-impl<'a, R, S, Q, N, K, F> SelectedRecord<'a, R, S, Q, N, K, F>
+impl<R, S, Q, N, K, F> SelectedRecord<'_, R, S, Q, N, K, F>
 where
     R: Read,
     S: SequenceCodec,
@@ -526,6 +587,11 @@ where
     F: SelectionExpr + HasKey,
 {
     /// Decode the selected record key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the current block does not contain keys of type `K`
+    /// or if the key bytes cannot be decoded into `K`.
     pub fn record_key(&self) -> Result<K, DryIceError> {
         self.reader.record_key()
     }
@@ -552,34 +618,10 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
 }
 
 impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R, S, Q, N, K> {
-    fn verify_codecs(&self, header: &crate::block::header::BlockHeader) -> Result<(), DryIceError> {
-        if header.sequence_codec_tag != S::TYPE_TAG {
-            return Err(DryIceError::SequenceCodecMismatch {
-                expected: S::TYPE_TAG,
-                found: header.sequence_codec_tag,
-            });
-        }
-        if header.quality_codec_tag != Q::TYPE_TAG {
-            return Err(DryIceError::QualityCodecMismatch {
-                expected: Q::TYPE_TAG,
-                found: header.quality_codec_tag,
-            });
-        }
-        if header.name_codec_tag != N::TYPE_TAG {
-            return Err(DryIceError::NameCodecMismatch {
-                expected: N::TYPE_TAG,
-                found: header.name_codec_tag,
-            });
-        }
-        Ok(())
-    }
-
     fn next_record_prepared<P>(&mut self) -> Result<bool, DryIceError>
     where
         P: SelectionPlan,
     {
-        let _needs_key = P::NEEDS_KEY;
-
         if let Some(block) = &mut self.current_block
             && block.advance::<S, Q, N, P>()?
         {
@@ -588,7 +630,7 @@ impl<R: Read, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> DryIceReader<R
 
         loop {
             if let Some(header) = format::read_block_header(&mut self.inner)? {
-                self.verify_codecs(&header)?;
+                verify_block_codecs::<S, Q, N>(&header)?;
                 let mut decoder = BlockDecoder::from_header_and_reader(header, &mut self.inner)?;
                 if decoder.advance::<S, Q, N, P>()? {
                     self.current_block = Some(decoder);

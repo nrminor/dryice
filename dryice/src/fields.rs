@@ -3,6 +3,10 @@
 //! The selection syntax is intentionally value-shaped for ergonomic builder
 //! calls such as `select(Sequence | Key)`, but the result carries type-level
 //! information so selected-read APIs can gate field access at compile time.
+//!
+//! Selections control selective decoding, not partial file I/O. `dryice` still
+//! reads whole blocks, but a selected reader only decodes the chosen projection
+//! for each record it advances through.
 
 use std::ops::BitOr;
 
@@ -67,6 +71,9 @@ pub struct SequenceQualityKey;
 pub struct AllFields;
 
 /// Marker trait implemented by field-selection expressions.
+///
+/// Users normally interact with this trait indirectly through field markers
+/// such as [`Sequence`] and algebraic combinations such as `Sequence | Key`.
 pub trait SelectionExpr: private::Sealed + Copy {}
 
 /// Internal preparation plan derived from a selected field set.

@@ -133,28 +133,45 @@ fn prepare_raw_binary(records: &[dryice::SeqRecord]) -> Vec<u8> {
     buf
 }
 
-fn bench_read(c: &mut Criterion) {
+struct ReadBenchInputs {
+    size: usize,
+    raw_binary_file: Vec<u8>,
+    fastq_file: Vec<u8>,
+    fastq_gzip_file: Vec<u8>,
+    dryice_raw_file: Vec<u8>,
+    dryice_two_bit_exact_file: Vec<u8>,
+    dryice_binned_quality_file: Vec<u8>,
+    dryice_split_names_file: Vec<u8>,
+    dryice_compact_file: Vec<u8>,
+    dryice_keyed_file: Vec<u8>,
+    dryice_compact_keyed_file: Vec<u8>,
+}
+
+fn prepare_read_bench_inputs() -> ReadBenchInputs {
     let records = generate_records(RECORD_COUNT);
-    let size = payload_size(&records);
+    ReadBenchInputs {
+        size: payload_size(&records),
+        raw_binary_file: prepare_raw_binary(&records),
+        fastq_file: prepare_fastq(&records),
+        fastq_gzip_file: prepare_fastq_gzip(&records),
+        dryice_raw_file: prepare_dryice_raw(&records),
+        dryice_two_bit_exact_file: prepare_dryice_two_bit_exact(&records),
+        dryice_binned_quality_file: prepare_dryice_binned_quality(&records),
+        dryice_split_names_file: prepare_dryice_split_names(&records),
+        dryice_compact_file: prepare_dryice_compact(&records),
+        dryice_keyed_file: prepare_dryice_keyed(&records),
+        dryice_compact_keyed_file: prepare_dryice_compact_keyed(&records),
+    }
+}
 
-    let raw_binary_file = prepare_raw_binary(&records);
-    let fastq_file = prepare_fastq(&records);
-    let fastq_gzip_file = prepare_fastq_gzip(&records);
-    let dryice_raw_file = prepare_dryice_raw(&records);
-    let dryice_two_bit_exact_file = prepare_dryice_two_bit_exact(&records);
-    let dryice_binned_quality_file = prepare_dryice_binned_quality(&records);
-    let dryice_split_names_file = prepare_dryice_split_names(&records);
-    let dryice_compact_file = prepare_dryice_compact(&records);
-    let dryice_keyed_file = prepare_dryice_keyed(&records);
-    let dryice_compact_keyed_file = prepare_dryice_compact_keyed(&records);
-
-    let mut group = c.benchmark_group("read");
-    group.throughput(Throughput::Bytes(size as u64));
-
+fn bench_read_baselines(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    inputs: &ReadBenchInputs,
+) {
     group.bench_function(BenchmarkId::new("raw_binary", RECORD_COUNT), |b| {
         b.iter(|| {
             let mut count = 0u64;
-            read_raw_binary(&raw_binary_file, |_, seq, _| {
+            read_raw_binary(&inputs.raw_binary_file, |_, seq, _| {
                 count += seq.len() as u64;
             });
             count
@@ -164,7 +181,7 @@ fn bench_read(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("fastq", RECORD_COUNT), |b| {
         b.iter(|| {
             let mut count = 0u64;
-            read_fastq(&fastq_file, |_, seq, _| {
+            read_fastq(&inputs.fastq_file, |_, seq, _| {
                 count += seq.len() as u64;
             });
             count
@@ -174,7 +191,7 @@ fn bench_read(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("fastq_gzip", RECORD_COUNT), |b| {
         b.iter(|| {
             let mut decompressed = Vec::new();
-            GzDecoder::new(fastq_gzip_file.as_slice())
+            GzDecoder::new(inputs.fastq_gzip_file.as_slice())
                 .read_to_end(&mut decompressed)
                 .expect("gzip decompress should succeed");
             let mut count = 0u64;
@@ -188,7 +205,7 @@ fn bench_read(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("dryice_raw", RECORD_COUNT), |b| {
         b.iter(|| {
             let mut reader =
-                DryIceReader::new(dryice_raw_file.as_slice()).expect("reader should open");
+                DryIceReader::new(inputs.dryice_raw_file.as_slice()).expect("reader should open");
             let mut count = 0u64;
             while reader.next_record().expect("next_record should succeed") {
                 count += reader.sequence().len() as u64;
@@ -201,7 +218,7 @@ fn bench_read(c: &mut Criterion) {
         b.iter(|| {
             let mut reader =
                 DryIceReader::with_codecs::<TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec>(
-                    dryice_compact_file.as_slice(),
+                    inputs.dryice_compact_file.as_slice(),
                 )
                 .expect("reader should open");
             let mut count = 0u64;
@@ -211,13 +228,26 @@ fn bench_read(c: &mut Criterion) {
             count
         });
     });
+}
 
+fn bench_read_attribution(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    inputs: &ReadBenchInputs,
+) {
+    bench_read_codec_attribution(group, inputs);
+    bench_read_compact_attribution(group, inputs);
+}
+
+fn bench_read_codec_attribution(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    inputs: &ReadBenchInputs,
+) {
     group.bench_function(
         BenchmarkId::new("dryice_two_bit_exact_seq_only", RECORD_COUNT),
         |b| {
             b.iter(|| {
                 let mut reader =
-                    DryIceReader::with_two_bit_exact(dryice_two_bit_exact_file.as_slice())
+                    DryIceReader::with_two_bit_exact(inputs.dryice_two_bit_exact_file.as_slice())
                         .expect("reader should open");
                 let mut count = 0u64;
                 while reader.next_record().expect("next_record should succeed") {
@@ -236,7 +266,7 @@ fn bench_read(c: &mut Criterion) {
                     dryice::RawAsciiCodec,
                     BinnedQualityCodec,
                     dryice::RawNameCodec,
-                >(dryice_binned_quality_file.as_slice())
+                >(inputs.dryice_binned_quality_file.as_slice())
                 .expect("reader should open");
                 let mut count = 0u64;
                 while reader.next_record().expect("next_record should succeed") {
@@ -255,7 +285,7 @@ fn bench_read(c: &mut Criterion) {
                     dryice::RawAsciiCodec,
                     dryice::RawQualityCodec,
                     SplitNameCodec,
-                >(dryice_split_names_file.as_slice())
+                >(inputs.dryice_split_names_file.as_slice())
                 .expect("reader should open");
                 let mut count = 0u64;
                 while reader.next_record().expect("next_record should succeed") {
@@ -265,7 +295,12 @@ fn bench_read(c: &mut Criterion) {
             });
         },
     );
+}
 
+fn bench_read_compact_attribution(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    inputs: &ReadBenchInputs,
+) {
     group.bench_function(
         BenchmarkId::new("dryice_compact_next_only", RECORD_COUNT),
         |b| {
@@ -274,7 +309,7 @@ fn bench_read(c: &mut Criterion) {
                     TwoBitExactCodec,
                     BinnedQualityCodec,
                     SplitNameCodec,
-                >(dryice_compact_file.as_slice())
+                >(inputs.dryice_compact_file.as_slice())
                 .expect("reader should open");
                 let mut count = 0u64;
                 while reader.next_record().expect("next_record should succeed") {
@@ -293,7 +328,7 @@ fn bench_read(c: &mut Criterion) {
                     TwoBitExactCodec,
                     BinnedQualityCodec,
                     SplitNameCodec,
-                >(dryice_compact_file.as_slice())
+                >(inputs.dryice_compact_file.as_slice())
                 .expect("reader should open");
                 let mut count = 0u64;
                 while reader.next_record().expect("next_record should succeed") {
@@ -314,7 +349,7 @@ fn bench_read(c: &mut Criterion) {
                     TwoBitExactCodec,
                     BinnedQualityCodec,
                     SplitNameCodec,
-                >(dryice_compact_file.as_slice())
+                >(inputs.dryice_compact_file.as_slice())
                 .expect("reader should open");
                 let records = reader
                     .into_records()
@@ -324,13 +359,18 @@ fn bench_read(c: &mut Criterion) {
             });
         },
     );
+}
 
+fn bench_read_selected(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    inputs: &ReadBenchInputs,
+) {
     group.bench_function(
         BenchmarkId::new("dryice_compact_selected_seq_only", RECORD_COUNT),
         |b| {
             b.iter(|| {
                 let mut reader = DryIceReader::builder()
-                    .inner(dryice_compact_file.as_slice())
+                    .inner(inputs.dryice_compact_file.as_slice())
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -351,7 +391,7 @@ fn bench_read(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 let mut reader = DryIceReader::builder()
-                    .inner(dryice_compact_file.as_slice())
+                    .inner(inputs.dryice_compact_file.as_slice())
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -372,7 +412,7 @@ fn bench_read(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 let mut reader = DryIceReader::builder()
-                    .inner(dryice_compact_file.as_slice())
+                    .inner(inputs.dryice_compact_file.as_slice())
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -393,7 +433,7 @@ fn bench_read(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 let mut reader = DryIceReader::builder()
-                    .inner(dryice_compact_keyed_file.as_slice())
+                    .inner(inputs.dryice_compact_keyed_file.as_slice())
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -411,10 +451,15 @@ fn bench_read(c: &mut Criterion) {
             });
         },
     );
+}
 
+fn bench_read_keyed(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    inputs: &ReadBenchInputs,
+) {
     group.bench_function(BenchmarkId::new("dryice_keyed", RECORD_COUNT), |b| {
         b.iter(|| {
-            let mut reader = DryIceReader::with_bytes8_key(dryice_keyed_file.as_slice())
+            let mut reader = DryIceReader::with_bytes8_key(inputs.dryice_keyed_file.as_slice())
                 .expect("reader should open");
             let mut count = 0u64;
             while reader.next_record().expect("next_record should succeed") {
@@ -429,7 +474,7 @@ fn bench_read(c: &mut Criterion) {
         BenchmarkId::new("dryice_keyed_key_only", RECORD_COUNT),
         |b| {
             b.iter(|| {
-                let mut reader = DryIceReader::with_bytes8_key(dryice_keyed_file.as_slice())
+                let mut reader = DryIceReader::with_bytes8_key(inputs.dryice_keyed_file.as_slice())
                     .expect("reader should open");
                 let mut count = 0u64;
                 while reader.next_record().expect("next_record should succeed") {
@@ -440,6 +485,18 @@ fn bench_read(c: &mut Criterion) {
             });
         },
     );
+}
+
+fn bench_read(c: &mut Criterion) {
+    let inputs = prepare_read_bench_inputs();
+
+    let mut group = c.benchmark_group("read");
+    group.throughput(Throughput::Bytes(inputs.size as u64));
+
+    bench_read_baselines(&mut group, &inputs);
+    bench_read_attribution(&mut group, &inputs);
+    bench_read_selected(&mut group, &inputs);
+    bench_read_keyed(&mut group, &inputs);
 
     group.finish();
 }

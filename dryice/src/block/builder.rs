@@ -111,31 +111,19 @@ impl<S: SequenceCodec, Q: QualityCodec, N: NameCodec> BlockBuilder<S, Q, N> {
         let sequence_offset = to_u32(self.sequence_bytes.len(), "sequence section offset")?;
         let quality_offset = to_u32(self.quality_bytes.len(), "quality section offset")?;
 
-        let name_start = self.name_bytes.len();
         N::encode_into(name, &mut self.name_bytes)?;
-        let name_len = to_u32(self.name_bytes.len() - name_start, "encoded name length")?;
 
-        let seq_start = self.sequence_bytes.len();
         S::encode_into(raw_sequence, &mut self.sequence_bytes)?;
-        let encoded_sequence_len = to_u32(
-            self.sequence_bytes.len() - seq_start,
-            "encoded sequence length",
-        )?;
 
-        let qual_start = self.quality_bytes.len();
         Q::encode_into(quality, &mut self.quality_bytes)?;
-        let encoded_quality_len = to_u32(
-            self.quality_bytes.len() - qual_start,
-            "encoded quality length",
-        )?;
 
         self.index.push(RecordIndexEntry {
             name_offset,
-            name_len,
+            name_len: to_u32(name.len(), "original name length")?,
             sequence_offset,
-            sequence_len: encoded_sequence_len,
+            sequence_len: to_u32(raw_sequence.len(), "original sequence length")?,
             quality_offset,
-            quality_len: encoded_quality_len,
+            quality_len: to_u32(quality.len(), "original quality length")?,
         });
 
         Ok(())
