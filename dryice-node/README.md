@@ -18,9 +18,9 @@ bun run build
 ### Writing records
 
 ```typescript
-import { Writer } from "./index.js";
+import { WriterBuilder } from "./api.js";
 
-const writer = Writer.builder().build();
+const writer = new WriterBuilder().build();
 writer.writeRecord(
   Buffer.from("read1"),
   Buffer.from("ACGTACGT"),
@@ -32,7 +32,7 @@ const data = writer.finish();
 ### Reading records
 
 ```typescript
-import { Reader } from "./index.js";
+import { Reader } from "./api.js";
 
 const reader = Reader.open(data);
 const records = reader.records();
@@ -40,6 +40,28 @@ for (const record of records) {
   console.log(record.name, record.sequence);
 }
 ```
+
+### Selective decoding
+
+```typescript
+import { ReaderBuilder } from "./api.js";
+
+const reader = new ReaderBuilder()
+  .twoBitExact()
+  .binnedQuality()
+  .splitNames()
+  .bytes8Key()
+  .select("sequence", "key")
+  .build(data);
+
+const record = reader.nextRecord();
+if (record) {
+  console.log(record.sequence, record.key);
+  console.log("name" in record); // false at runtime
+}
+```
+
+Selective decoding changes which fields are decoded for each record. `dryice` still reads full blocks from disk, but projected readers only decode the projection you ask for. In the handwritten TypeScript facade, `select(...)` also narrows the returned record type so omitted fields disappear from the static type.
 
 ### Compact codecs
 
@@ -70,11 +92,11 @@ console.log(records[0].key);
 
 ## API
 
-TypeScript type definitions are auto-generated from the Rust source via NAPI-RS. The main types are:
+The package uses a handwritten public TypeScript facade layered on top of the generated NAPI bindings. The main types are:
 
 - `Writer` / `WriterBuilder` — write records with configurable codecs and keys
-- `Reader` / `ReaderBuilder` — read records with codec verification
-- `Record` — a decoded record with `name`, `sequence`, `quality`, and optional `key` fields (all `Buffer`)
+- `Reader` / `ReaderBuilder` — read records with codec verification and optional selective decoding
+- `ProjectedRecord<F>` — a projection-aware record type used by the TypeScript facade for `select(...)`
 
 ## About dryice
 

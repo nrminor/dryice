@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { WriterBuilder, Reader, ReaderBuilder } from "../index.js";
+import { WriterBuilder, Reader, ReaderBuilder } from "../api.js";
 
 describe("Writer and Reader with default codecs", () => {
   test("round-trip two records", () => {
@@ -99,6 +99,156 @@ describe("Writer and Reader with compact codecs", () => {
     expect(records.length).toBe(1);
     expect(Buffer.from(records[0].sequence).toString()).toBe("ACGTACGT");
     expect(records[0].quality.length).toBe(8);
+  });
+
+  test("selective decoding sequence only", () => {
+    const writer = new WriterBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .build();
+    writer.writeRecord(
+      Buffer.from("read1 desc"),
+      Buffer.from("ACGTACGT"),
+      Buffer.from("!!!!!!!!")
+    );
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .select("sequence")
+      .build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect(Buffer.from(record!.sequence!).toString()).toBe("ACGTACGT");
+    expect(record!.name).toBeUndefined();
+    expect(record!.quality).toBeUndefined();
+    expect(record!.key).toBeUndefined();
+  });
+
+  test("selective decoding quality only", () => {
+    const writer = new WriterBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .build();
+    writer.writeRecord(
+      Buffer.from("read1 desc"),
+      Buffer.from("ACGTACGT"),
+      Buffer.from("!!!!!!!!")
+    );
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .select("quality")
+      .build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect(record!.quality).not.toBeNull();
+    expect(record!.quality!.length).toBe(8);
+    expect(record!.name).toBeUndefined();
+    expect(record!.sequence).toBeUndefined();
+    expect(record!.key).toBeUndefined();
+  });
+
+  test("selective decoding name only", () => {
+    const writer = new WriterBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .build();
+    writer.writeRecord(
+      Buffer.from("read1 desc"),
+      Buffer.from("ACGTACGT"),
+      Buffer.from("!!!!!!!!")
+    );
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .select("name")
+      .build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect(Buffer.from(record!.name!).toString()).toBe("read1 desc");
+    expect(record!.sequence).toBeUndefined();
+    expect(record!.quality).toBeUndefined();
+    expect(record!.key).toBeUndefined();
+  });
+
+  test("selective decoding sequence and key", () => {
+    const writer = new WriterBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .bytes8Key()
+      .build();
+    writer.writeRecordWithKey(
+      Buffer.from("read1 desc"),
+      Buffer.from("ACGTACGT"),
+      Buffer.from("!!!!!!!!"),
+      Buffer.from("sortkey!")
+    );
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .bytes8Key()
+      .select("sequence", "key")
+      .build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect(Buffer.from(record!.sequence!).toString()).toBe("ACGTACGT");
+    expect(Buffer.from(record!.key!).toString()).toBe("sortkey!");
+    expect(record!.name).toBeUndefined();
+    expect(record!.quality).toBeUndefined();
+  });
+
+  test("selective decoding rejects unknown field", () => {
+    expect(() => {
+      new ReaderBuilder().select("banana");
+    }).toThrow();
+  });
+
+  test("variadic select returns records with omitted properties absent", () => {
+    const writer = new WriterBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .build();
+    writer.writeRecord(
+      Buffer.from("read1 desc"),
+      Buffer.from("ACGTACGT"),
+      Buffer.from("!!!!!!!!")
+    );
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder()
+      .twoBitExact()
+      .binnedQuality()
+      .splitNames()
+      .select("sequence")
+      .build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect("sequence" in record!).toBe(true);
+    expect("name" in record!).toBe(false);
+    expect("quality" in record!).toBe(false);
+    expect("key" in record!).toBe(false);
   });
 });
 

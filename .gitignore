@@ -92,6 +92,8 @@
 !/dryice-node
 !/dryice-node/Cargo.toml
 !/dryice-node/build.rs
+!/dryice-node/api.js
+!/dryice-node/api.d.ts
 !/dryice-node/package.json
 !/dryice-node/tsconfig.json
 !/dryice-node/src

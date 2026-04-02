@@ -4,8 +4,11 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use dryice::{
-    BinnedQualityCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec, SplitNameCodec,
-    TwoBitExactCodec, TwoBitLossyNCodec,
+    BinnedQualityCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec,
+    SelectedDryIceReader as RustSelectedReader, SplitNameCodec, TwoBitExactCodec,
+    TwoBitLossyNCodec,
+    fields::{Key as SelectKey, Name as SelectName, Quality as SelectQuality},
+    fields::{Sequence as SelectSequence, SequenceKey as SelectSequenceKey},
 };
 use dryice::{
     Bytes8Key, DryIceError, DryIceReader as RustReader, DryIceWriter as RustWriter, NoRecordKey,
@@ -58,6 +61,7 @@ macro_rules! dispatch_all_readers {
             ReaderInner::TwoBitBinnedSplit(r) => r.$method($($arg),*),
             ReaderInner::LossyBinnedSplit(r) => r.$method($($arg),*),
             ReaderInner::RawRawRawB8(r) => r.$method($($arg),*),
+            ReaderInner::TwoBitBinnedSplitB8(r) => r.$method($($arg),*),
         }
     };
 }
@@ -127,6 +131,9 @@ enum ReaderInner {
         RustReader<R, TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec, NoRecordKey>,
     ),
     RawRawRawB8(RustReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key>),
+    TwoBitBinnedSplitB8(
+        RustReader<R, TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec, Bytes8Key>,
+    ),
 }
 
 impl ReaderInner {
@@ -152,8 +159,501 @@ impl ReaderInner {
                 let k = r.record_key().map_err(to_napi_err)?;
                 Ok(Some(k.0.to_vec()))
             },
+            Self::TwoBitBinnedSplitB8(r) => {
+                let k = r.record_key().map_err(to_napi_err)?;
+                Ok(Some(k.0.to_vec()))
+            },
             _ => Ok(None),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Projection {
+    All,
+    Name,
+    Sequence,
+    Quality,
+    Key,
+    SequenceKey,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SequenceCodecKind {
+    Raw,
+    TwoBitExact,
+    TwoBitLossyN,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QualityCodecKind {
+    Raw,
+    Binned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NameCodecKind {
+    Raw,
+    Split,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyKind {
+    None,
+    Bytes8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodecProfile {
+    Raw,
+    TwoBitExactRaw,
+    TwoBitExactBinnedSplit,
+    TwoBitLossyBinnedSplit,
+    RawBytes8,
+    TwoBitExactBinnedSplitBytes8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReaderRequest {
+    profile: CodecProfile,
+    projection: Projection,
+}
+
+fn parse_sequence_codec(value: &str) -> Result<SequenceCodecKind> {
+    match value {
+        "raw" => Ok(SequenceCodecKind::Raw),
+        "two_bit_exact" => Ok(SequenceCodecKind::TwoBitExact),
+        "two_bit_lossy_n" => Ok(SequenceCodecKind::TwoBitLossyN),
+        _ => Err(napi::Error::from_reason(format!(
+            "unknown sequence codec: {value}",
+        ))),
+    }
+}
+
+fn parse_quality_codec(value: &str) -> Result<QualityCodecKind> {
+    match value {
+        "raw" => Ok(QualityCodecKind::Raw),
+        "binned" => Ok(QualityCodecKind::Binned),
+        _ => Err(napi::Error::from_reason(format!(
+            "unknown quality codec: {value}",
+        ))),
+    }
+}
+
+fn parse_name_codec(value: &str) -> Result<NameCodecKind> {
+    match value {
+        "raw" => Ok(NameCodecKind::Raw),
+        "split" => Ok(NameCodecKind::Split),
+        _ => Err(napi::Error::from_reason(format!(
+            "unknown name codec: {value}",
+        ))),
+    }
+}
+
+fn parse_key_kind(value: &str) -> Result<KeyKind> {
+    match value {
+        "none" => Ok(KeyKind::None),
+        "bytes8" => Ok(KeyKind::Bytes8),
+        _ => Err(napi::Error::from_reason(format!(
+            "unknown key kind: {value}",
+        ))),
+    }
+}
+
+fn normalize_profile(
+    sequence: SequenceCodecKind,
+    quality: QualityCodecKind,
+    name: NameCodecKind,
+    key: KeyKind,
+) -> Result<CodecProfile> {
+    match (sequence, quality, name, key) {
+        (SequenceCodecKind::Raw, QualityCodecKind::Raw, NameCodecKind::Raw, KeyKind::None) => {
+            Ok(CodecProfile::Raw)
+        },
+        (
+            SequenceCodecKind::TwoBitExact,
+            QualityCodecKind::Raw,
+            NameCodecKind::Raw,
+            KeyKind::None,
+        ) => Ok(CodecProfile::TwoBitExactRaw),
+        (
+            SequenceCodecKind::TwoBitExact,
+            QualityCodecKind::Binned,
+            NameCodecKind::Split,
+            KeyKind::None,
+        ) => Ok(CodecProfile::TwoBitExactBinnedSplit),
+        (
+            SequenceCodecKind::TwoBitLossyN,
+            QualityCodecKind::Binned,
+            NameCodecKind::Split,
+            KeyKind::None,
+        ) => Ok(CodecProfile::TwoBitLossyBinnedSplit),
+        (SequenceCodecKind::Raw, QualityCodecKind::Raw, NameCodecKind::Raw, KeyKind::Bytes8) => {
+            Ok(CodecProfile::RawBytes8)
+        },
+        (
+            SequenceCodecKind::TwoBitExact,
+            QualityCodecKind::Binned,
+            NameCodecKind::Split,
+            KeyKind::Bytes8,
+        ) => Ok(CodecProfile::TwoBitExactBinnedSplitBytes8),
+        _ => Err(napi::Error::from_reason(
+            "unsupported codec combination for the Node wrapper",
+        )),
+    }
+}
+
+impl ReaderRequest {
+    fn from_builder(
+        sequence_codec: &str,
+        quality_codec: &str,
+        name_codec: &str,
+        record_key: &str,
+        selected_fields: &[String],
+    ) -> Result<Self> {
+        let sequence = parse_sequence_codec(sequence_codec)?;
+        let quality = parse_quality_codec(quality_codec)?;
+        let name = parse_name_codec(name_codec)?;
+        let key = parse_key_kind(record_key)?;
+        let projection = parse_projection(selected_fields, key)?;
+        let profile = normalize_profile(sequence, quality, name, key)?;
+        Ok(Self {
+            profile,
+            projection,
+        })
+    }
+}
+
+enum SelectedReaderInner {
+    RawRawRawName(
+        RustSelectedReader<
+            R,
+            RawAsciiCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            NoRecordKey,
+            SelectName,
+        >,
+    ),
+    RawRawRawSequence(
+        RustSelectedReader<
+            R,
+            RawAsciiCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            NoRecordKey,
+            SelectSequence,
+        >,
+    ),
+    RawRawRawQuality(
+        RustSelectedReader<
+            R,
+            RawAsciiCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            NoRecordKey,
+            SelectQuality,
+        >,
+    ),
+    TwoBitRawRawName(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            NoRecordKey,
+            SelectName,
+        >,
+    ),
+    TwoBitRawRawSequence(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            NoRecordKey,
+            SelectSequence,
+        >,
+    ),
+    TwoBitRawRawQuality(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            NoRecordKey,
+            SelectQuality,
+        >,
+    ),
+    TwoBitBinnedSplitName(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            NoRecordKey,
+            SelectName,
+        >,
+    ),
+    TwoBitBinnedSplitSequence(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            NoRecordKey,
+            SelectSequence,
+        >,
+    ),
+    TwoBitBinnedSplitQuality(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            NoRecordKey,
+            SelectQuality,
+        >,
+    ),
+    LossyBinnedSplitName(
+        RustSelectedReader<
+            R,
+            TwoBitLossyNCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            NoRecordKey,
+            SelectName,
+        >,
+    ),
+    LossyBinnedSplitSequence(
+        RustSelectedReader<
+            R,
+            TwoBitLossyNCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            NoRecordKey,
+            SelectSequence,
+        >,
+    ),
+    LossyBinnedSplitQuality(
+        RustSelectedReader<
+            R,
+            TwoBitLossyNCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            NoRecordKey,
+            SelectQuality,
+        >,
+    ),
+    RawRawRawB8Key(
+        RustSelectedReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key, SelectKey>,
+    ),
+    RawRawRawB8SequenceKey(
+        RustSelectedReader<
+            R,
+            RawAsciiCodec,
+            RawQualityCodec,
+            RawNameCodec,
+            Bytes8Key,
+            SelectSequenceKey,
+        >,
+    ),
+    TwoBitBinnedSplitB8Key(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            Bytes8Key,
+            SelectKey,
+        >,
+    ),
+    TwoBitBinnedSplitB8SequenceKey(
+        RustSelectedReader<
+            R,
+            TwoBitExactCodec,
+            BinnedQualityCodec,
+            SplitNameCodec,
+            Bytes8Key,
+            SelectSequenceKey,
+        >,
+    ),
+}
+
+enum ReaderKind {
+    Full(ReaderInner),
+    Selected(SelectedReaderInner),
+}
+
+#[napi(object)]
+pub struct Record {
+    pub name: Option<Buffer>,
+    pub sequence: Option<Buffer>,
+    pub quality: Option<Buffer>,
+    pub key: Option<Buffer>,
+}
+
+impl Record {
+    fn full(name: &[u8], sequence: &[u8], quality: &[u8], key: Option<Vec<u8>>) -> Self {
+        Self {
+            name: Some(Buffer::from(name)),
+            sequence: Some(Buffer::from(sequence)),
+            quality: Some(Buffer::from(quality)),
+            key: key.map(Buffer::from),
+        }
+    }
+
+    fn name_only(name: &[u8]) -> Self {
+        Self {
+            name: Some(Buffer::from(name)),
+            sequence: None,
+            quality: None,
+            key: None,
+        }
+    }
+
+    fn sequence_only(sequence: &[u8]) -> Self {
+        Self {
+            name: None,
+            sequence: Some(Buffer::from(sequence)),
+            quality: None,
+            key: None,
+        }
+    }
+
+    fn quality_only(quality: &[u8]) -> Self {
+        Self {
+            name: None,
+            sequence: None,
+            quality: Some(Buffer::from(quality)),
+            key: None,
+        }
+    }
+
+    fn key_only(key: Vec<u8>) -> Self {
+        Self {
+            name: None,
+            sequence: None,
+            quality: None,
+            key: Some(Buffer::from(key)),
+        }
+    }
+
+    fn sequence_and_key(sequence: &[u8], key: Vec<u8>) -> Self {
+        Self {
+            name: None,
+            sequence: Some(Buffer::from(sequence)),
+            quality: None,
+            key: Some(Buffer::from(key)),
+        }
+    }
+}
+
+macro_rules! dispatch_selected_readers {
+    ($self:expr, { $( $variant:ident => $handler:ident ),* $(,)? }) => {
+        match $self {
+            $( Self::$variant(reader) => $handler(reader), )*
+        }
+    };
+}
+
+fn next_name_record<S, Q, N, K>(
+    reader: &mut RustSelectedReader<R, S, Q, N, K, SelectName>,
+) -> Result<Option<Record>>
+where
+    S: dryice::SequenceCodec,
+    Q: dryice::QualityCodec,
+    N: dryice::NameCodec,
+{
+    Ok(reader
+        .next_record()
+        .map_err(to_napi_err)?
+        .map(|record| Record::name_only(record.name())))
+}
+
+fn next_sequence_record<S, Q, N, K>(
+    reader: &mut RustSelectedReader<R, S, Q, N, K, SelectSequence>,
+) -> Result<Option<Record>>
+where
+    S: dryice::SequenceCodec,
+    Q: dryice::QualityCodec,
+    N: dryice::NameCodec,
+{
+    Ok(reader
+        .next_record()
+        .map_err(to_napi_err)?
+        .map(|record| Record::sequence_only(record.sequence())))
+}
+
+fn next_quality_record<S, Q, N, K>(
+    reader: &mut RustSelectedReader<R, S, Q, N, K, SelectQuality>,
+) -> Result<Option<Record>>
+where
+    S: dryice::SequenceCodec,
+    Q: dryice::QualityCodec,
+    N: dryice::NameCodec,
+{
+    Ok(reader
+        .next_record()
+        .map_err(to_napi_err)?
+        .map(|record| Record::quality_only(record.quality())))
+}
+
+fn next_key_record<S, Q, N>(
+    reader: &mut RustSelectedReader<R, S, Q, N, Bytes8Key, SelectKey>,
+) -> Result<Option<Record>>
+where
+    S: dryice::SequenceCodec,
+    Q: dryice::QualityCodec,
+    N: dryice::NameCodec,
+{
+    if let Some(record) = reader.next_record().map_err(to_napi_err)? {
+        Ok(Some(Record::key_only(
+            record.record_key().map_err(to_napi_err)?.0.to_vec(),
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+fn next_sequence_key_record<S, Q, N>(
+    reader: &mut RustSelectedReader<R, S, Q, N, Bytes8Key, SelectSequenceKey>,
+) -> Result<Option<Record>>
+where
+    S: dryice::SequenceCodec,
+    Q: dryice::QualityCodec,
+    N: dryice::NameCodec,
+{
+    if let Some(record) = reader.next_record().map_err(to_napi_err)? {
+        Ok(Some(Record::sequence_and_key(
+            record.sequence(),
+            record.record_key().map_err(to_napi_err)?.0.to_vec(),
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+impl SelectedReaderInner {
+    fn next_record(&mut self) -> Result<Option<Record>> {
+        dispatch_selected_readers!(self, {
+            RawRawRawName => next_name_record,
+            TwoBitRawRawName => next_name_record,
+            TwoBitBinnedSplitName => next_name_record,
+            LossyBinnedSplitName => next_name_record,
+            RawRawRawSequence => next_sequence_record,
+            TwoBitRawRawSequence => next_sequence_record,
+            TwoBitBinnedSplitSequence => next_sequence_record,
+            LossyBinnedSplitSequence => next_sequence_record,
+            RawRawRawQuality => next_quality_record,
+            TwoBitRawRawQuality => next_quality_record,
+            TwoBitBinnedSplitQuality => next_quality_record,
+            LossyBinnedSplitQuality => next_quality_record,
+            RawRawRawB8Key => next_key_record,
+            TwoBitBinnedSplitB8Key => next_key_record,
+            RawRawRawB8SequenceKey => next_sequence_key_record,
+            TwoBitBinnedSplitB8SequenceKey => next_sequence_key_record,
+        })
     }
 }
 
@@ -220,46 +720,275 @@ fn build_writer(
     }
 }
 
-fn build_reader(
-    data: Vec<u8>,
-    seq: &str,
-    qual: &str,
-    name: &str,
-    key: &str,
-) -> Result<ReaderInner> {
+fn build_full_reader(data: Vec<u8>, profile: CodecProfile) -> Result<ReaderInner> {
     let cursor = std::io::Cursor::new(data);
-    match (seq, qual, name, key) {
-        ("raw", "raw", "raw", "none") => Ok(ReaderInner::RawRawRaw(
+    match profile {
+        CodecProfile::Raw => Ok(ReaderInner::RawRawRaw(
             RustReader::new(cursor).map_err(to_napi_err)?,
         )),
-        ("two_bit_exact", "raw", "raw", "none") => Ok(ReaderInner::TwoBitRawRaw(
+        CodecProfile::TwoBitExactRaw => Ok(ReaderInner::TwoBitRawRaw(
             RustReader::with_two_bit_exact(cursor).map_err(to_napi_err)?,
         )),
-        ("two_bit_exact", "binned", "split", "none") => Ok(ReaderInner::TwoBitBinnedSplit(
+        CodecProfile::TwoBitExactBinnedSplit => Ok(ReaderInner::TwoBitBinnedSplit(
             RustReader::with_codecs::<TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec>(cursor)
                 .map_err(to_napi_err)?,
         )),
-        ("two_bit_lossy_n", "binned", "split", "none") => Ok(ReaderInner::LossyBinnedSplit(
+        CodecProfile::TwoBitLossyBinnedSplit => Ok(ReaderInner::LossyBinnedSplit(
             RustReader::with_codecs::<TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec>(
                 cursor,
             )
             .map_err(to_napi_err)?,
         )),
-        ("raw", "raw", "raw", "bytes8") => Ok(ReaderInner::RawRawRawB8(
+        CodecProfile::RawBytes8 => Ok(ReaderInner::RawRawRawB8(
             RustReader::with_bytes8_key(cursor).map_err(to_napi_err)?,
         )),
-        _ => Err(napi::Error::from_reason(format!(
-            "unsupported codec combination: seq={seq}, qual={qual}, name={name}, key={key}"
-        ))),
+        CodecProfile::TwoBitExactBinnedSplitBytes8 => Ok(ReaderInner::TwoBitBinnedSplitB8(
+            RustReader::builder()
+                .inner(cursor)
+                .two_bit_exact()
+                .quality_codec::<BinnedQualityCodec>()
+                .name_codec::<SplitNameCodec>()
+                .bytes8_key()
+                .build()
+                .map_err(to_napi_err)?,
+        )),
     }
 }
 
-#[napi(object)]
-pub struct Record {
-    pub name: Buffer,
-    pub sequence: Buffer,
-    pub quality: Buffer,
-    pub key: Option<Buffer>,
+fn validate_selected_fields(fields: &[String]) -> Result<()> {
+    for field in fields {
+        match field.as_str() {
+            "name" | "sequence" | "quality" | "key" => {},
+            _ => {
+                return Err(napi::Error::from_reason(format!(
+                    "unknown selected field: {field}",
+                )));
+            },
+        }
+    }
+    Ok(())
+}
+
+fn parse_projection(fields: &[String], key_kind: KeyKind) -> Result<Projection> {
+    validate_selected_fields(fields)?;
+
+    if fields.is_empty() {
+        return Ok(Projection::All);
+    }
+
+    let mut name = false;
+    let mut sequence = false;
+    let mut quality = false;
+    let mut key = false;
+
+    for field in fields {
+        match field.as_str() {
+            "name" => name = true,
+            "sequence" => sequence = true,
+            "quality" => quality = true,
+            "key" => key = true,
+            _ => unreachable!("field names are pre-validated"),
+        }
+    }
+
+    if key && key_kind == KeyKind::None {
+        return Err(napi::Error::from_reason(
+            "key projection requires a keyed reader",
+        ));
+    }
+
+    match (name, sequence, quality, key) {
+        (true, true, true, false) => Ok(Projection::All),
+        (true, false, false, false) => Ok(Projection::Name),
+        (false, true, false, false) => Ok(Projection::Sequence),
+        (false, false, true, false) => Ok(Projection::Quality),
+        (false, false, false, true) => Ok(Projection::Key),
+        (false, true, false, true) => Ok(Projection::SequenceKey),
+        _ => Err(napi::Error::from_reason(
+            "unsupported projection; supported projections are name, sequence, quality, key, sequence+key, or full row selection",
+        )),
+    }
+}
+
+fn build_selected_reader(
+    data: Vec<u8>,
+    profile: CodecProfile,
+    projection: Projection,
+) -> Result<SelectedReaderInner> {
+    let cursor = std::io::Cursor::new(data);
+    match (profile, projection) {
+        (CodecProfile::Raw, Projection::Name) => Ok(SelectedReaderInner::RawRawRawName(
+            RustReader::builder()
+                .inner(cursor)
+                .select(SelectName)
+                .build()
+                .map_err(to_napi_err)?,
+        )),
+        (CodecProfile::Raw, Projection::Sequence) => Ok(SelectedReaderInner::RawRawRawSequence(
+            RustReader::builder()
+                .inner(cursor)
+                .select(SelectSequence)
+                .build()
+                .map_err(to_napi_err)?,
+        )),
+        (CodecProfile::Raw, Projection::Quality) => Ok(SelectedReaderInner::RawRawRawQuality(
+            RustReader::builder()
+                .inner(cursor)
+                .select(SelectQuality)
+                .build()
+                .map_err(to_napi_err)?,
+        )),
+        (CodecProfile::TwoBitExactRaw, Projection::Name) => {
+            Ok(SelectedReaderInner::TwoBitRawRawName(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .select(SelectName)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactRaw, Projection::Sequence) => {
+            Ok(SelectedReaderInner::TwoBitRawRawSequence(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .select(SelectSequence)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactRaw, Projection::Quality) => {
+            Ok(SelectedReaderInner::TwoBitRawRawQuality(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .select(SelectQuality)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactBinnedSplit, Projection::Name) => {
+            Ok(SelectedReaderInner::TwoBitBinnedSplitName(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(SelectName)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactBinnedSplit, Projection::Sequence) => {
+            Ok(SelectedReaderInner::TwoBitBinnedSplitSequence(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(SelectSequence)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactBinnedSplit, Projection::Quality) => {
+            Ok(SelectedReaderInner::TwoBitBinnedSplitQuality(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(SelectQuality)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitLossyBinnedSplit, Projection::Name) => {
+            Ok(SelectedReaderInner::LossyBinnedSplitName(
+                RustReader::builder()
+                    .inner(cursor)
+                    .sequence_codec::<TwoBitLossyNCodec>()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(SelectName)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitLossyBinnedSplit, Projection::Sequence) => {
+            Ok(SelectedReaderInner::LossyBinnedSplitSequence(
+                RustReader::builder()
+                    .inner(cursor)
+                    .sequence_codec::<TwoBitLossyNCodec>()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(SelectSequence)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitLossyBinnedSplit, Projection::Quality) => {
+            Ok(SelectedReaderInner::LossyBinnedSplitQuality(
+                RustReader::builder()
+                    .inner(cursor)
+                    .sequence_codec::<TwoBitLossyNCodec>()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .select(SelectQuality)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::RawBytes8, Projection::Key) => Ok(SelectedReaderInner::RawRawRawB8Key(
+            RustReader::builder()
+                .inner(cursor)
+                .bytes8_key()
+                .select(SelectKey)
+                .build()
+                .map_err(to_napi_err)?,
+        )),
+        (CodecProfile::RawBytes8, Projection::SequenceKey) => {
+            Ok(SelectedReaderInner::RawRawRawB8SequenceKey(
+                RustReader::builder()
+                    .inner(cursor)
+                    .bytes8_key()
+                    .select(SelectSequenceKey)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactBinnedSplitBytes8, Projection::Key) => {
+            Ok(SelectedReaderInner::TwoBitBinnedSplitB8Key(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .bytes8_key()
+                    .select(SelectKey)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (CodecProfile::TwoBitExactBinnedSplitBytes8, Projection::SequenceKey) => {
+            Ok(SelectedReaderInner::TwoBitBinnedSplitB8SequenceKey(
+                RustReader::builder()
+                    .inner(cursor)
+                    .two_bit_exact()
+                    .quality_codec::<BinnedQualityCodec>()
+                    .name_codec::<SplitNameCodec>()
+                    .bytes8_key()
+                    .select(SelectSequenceKey)
+                    .build()
+                    .map_err(to_napi_err)?,
+            ))
+        },
+        (profile, projection) => Err(napi::Error::from_reason(format!(
+            "unsupported projection {:?} for codec profile {:?}",
+            projection, profile,
+        ))),
+    }
 }
 
 #[napi]
@@ -395,6 +1124,7 @@ pub struct ReaderBuilder {
     quality_codec: String,
     name_codec: String,
     record_key: String,
+    selected_fields: Vec<String>,
 }
 
 impl Default for ReaderBuilder {
@@ -412,6 +1142,7 @@ impl ReaderBuilder {
             quality_codec: "raw".to_string(),
             name_codec: "raw".to_string(),
             record_key: "none".to_string(),
+            selected_fields: Vec::new(),
         }
     }
 
@@ -446,49 +1177,65 @@ impl ReaderBuilder {
     }
 
     #[napi]
+    pub fn select(&mut self, fields: Vec<String>) -> Result<&Self> {
+        validate_selected_fields(&fields)?;
+        self.selected_fields = fields;
+        Ok(self)
+    }
+
+    #[napi]
     pub fn build(&self, data: Buffer) -> Result<Reader> {
-        let inner = build_reader(
-            data.to_vec(),
+        let request = ReaderRequest::from_builder(
             &self.sequence_codec,
             &self.quality_codec,
             &self.name_codec,
             &self.record_key,
+            &self.selected_fields,
         )?;
+
+        let inner = match request.projection {
+            Projection::All => ReaderKind::Full(build_full_reader(data.to_vec(), request.profile)?),
+            projection => ReaderKind::Selected(build_selected_reader(
+                data.to_vec(),
+                request.profile,
+                projection,
+            )?),
+        };
         Ok(Reader { inner })
     }
 }
 
 #[napi]
 pub struct Reader {
-    inner: ReaderInner,
+    inner: ReaderKind,
 }
 
 #[napi]
 impl Reader {
     #[napi(factory)]
     pub fn open(data: Buffer) -> Result<Reader> {
-        let inner = build_reader(data.to_vec(), "raw", "raw", "raw", "none")?;
+        let inner = ReaderKind::Full(build_full_reader(data.to_vec(), CodecProfile::Raw)?);
         Ok(Reader { inner })
     }
 
     #[napi]
     pub fn next_record(&mut self) -> Result<Option<Record>> {
-        let has_record = self.inner.next_record()?;
-        if !has_record {
-            return Ok(None);
+        match &mut self.inner {
+            ReaderKind::Full(inner) => {
+                let has_record = inner.next_record()?;
+                if !has_record {
+                    return Ok(None);
+                }
+
+                let name = inner.name();
+                let sequence = inner.sequence();
+                let quality = inner.quality();
+                let key = inner.record_key()?;
+
+                Ok(Some(Record::full(name, sequence, quality, key)))
+            },
+            ReaderKind::Selected(inner) => inner.next_record(),
         }
-
-        let name = Buffer::from(self.inner.name());
-        let sequence = Buffer::from(self.inner.sequence());
-        let quality = Buffer::from(self.inner.quality());
-        let key = self.inner.record_key()?.map(|k| Buffer::from(k.as_slice()));
-
-        Ok(Some(Record {
-            name,
-            sequence,
-            quality,
-            key,
-        }))
     }
 
     #[napi]

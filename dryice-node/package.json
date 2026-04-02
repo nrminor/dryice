@@ -2,8 +2,8 @@
   "name": "dryice-node",
   "version": "0.1.0",
   "description": "Node.js/TypeScript bindings for the dryice high-throughput genomic record container",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "api.js",
+  "types": "api.d.ts",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -19,6 +19,8 @@
     ]
   },
   "files": [
+    "api.d.ts",
+    "api.js",
     "index.d.ts",
     "index.js"
   ],
