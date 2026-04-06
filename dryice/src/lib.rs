@@ -296,7 +296,7 @@ pub use block::{
 pub use config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter, SelectedDryIceReader, SelectedRecord};
-pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};
+pub use key::{Bytes8Key, Bytes16Key, KmerKey, Minimizer64, NoRecordKey, PrefixKmer64, RecordKey};
 #[cfg(feature = "mmap")]
 pub use mmap_io::MmapDryIceReader;
 pub use record::{EMPTY_RECORD, EmptyRecord, SeqRecord, SeqRecordExt, SeqRecordLike};

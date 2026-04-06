@@ -2,9 +2,10 @@
 
 use dryice::{
     BinnedQualityCodec, BlockLayoutOptions, BlockSizePolicy, Bytes8Key, Bytes16Key, DryIceReader,
-    DryIceWriter, DryIceWriterOptions, EMPTY_RECORD, OmittedNameCodec, OmittedQualityCodec,
-    OmittedSequenceCodec, QualityCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec, RecordKey,
-    SeqRecord, SeqRecordExt, SeqRecordLike, SplitNameCodec,
+    DryIceWriter, DryIceWriterOptions, EMPTY_RECORD, Minimizer64, OmittedNameCodec,
+    OmittedQualityCodec, OmittedSequenceCodec, PrefixKmer64, QualityCodec, RawAsciiCodec,
+    RawNameCodec, RawQualityCodec, RecordKey, SeqRecord, SeqRecordExt, SeqRecordLike,
+    SplitNameCodec,
     fields::{Key, Name, Quality, Sequence},
 };
 use proptest::prelude::*;
@@ -635,6 +636,119 @@ fn key_only_round_trip_still_reads_empty_row_fields() {
     assert_eq!(reader.sequence(), b"");
     assert_eq!(reader.quality(), b"");
     assert_eq!(reader.record_key().expect("key should decode"), key);
+}
+
+#[test]
+fn prefix_kmer64_returns_none_for_short_sequence() {
+    let key = PrefixKmer64::<5>::try_from_sequence(b"ACG").expect("constructor should succeed");
+    assert!(key.is_none());
+}
+
+#[test]
+fn prefix_kmer64_returns_none_for_ambiguous_prefix() {
+    let key =
+        PrefixKmer64::<5>::try_from_sequence(b"ACGTNAAAA").expect("constructor should succeed");
+    assert!(key.is_none());
+}
+
+#[test]
+fn prefix_kmer64_is_canonical_over_reverse_complement() {
+    let forward =
+        PrefixKmer64::<5>::try_from_sequence(b"ACGTGAAAA").expect("constructor should succeed");
+    let reverse =
+        PrefixKmer64::<5>::try_from_sequence(b"CACGTTTTT").expect("constructor should succeed");
+
+    assert_eq!(forward, reverse);
+    assert!(forward.is_some());
+}
+
+#[test]
+fn minimizer64_returns_none_for_short_sequence() {
+    let key =
+        Minimizer64::<5, 4>::try_from_sequence(b"ACGTAC").expect("constructor should succeed");
+    assert!(key.is_none());
+}
+
+#[test]
+fn minimizer64_returns_none_for_ambiguous_sequence() {
+    let key = Minimizer64::<5, 4>::try_from_sequence(b"ACGTNACGTAAA")
+        .expect("constructor should succeed");
+    assert!(key.is_none());
+}
+
+#[test]
+fn minimizer64_is_canonical_over_reverse_complement() {
+    let seq = b"ACGTGCTCAGAGACTCAGAGGA";
+    let rc = b"TCCTCTGAGTCTCTGAGCACGT";
+
+    let forward = Minimizer64::<5, 7>::try_from_sequence(seq).expect("constructor should succeed");
+    let reverse = Minimizer64::<5, 7>::try_from_sequence(rc).expect("constructor should succeed");
+
+    assert_eq!(forward, reverse);
+    assert!(forward.is_some());
+}
+
+#[test]
+fn prefix_kmer64_round_trips_through_keyed_writer() {
+    let record = SeqRecord::new(
+        b"read1".to_vec(),
+        b"ACGTGAAAA".to_vec(),
+        b"!!!!!!!!!".to_vec(),
+    )
+    .expect("valid record");
+    let key = PrefixKmer64::<5>::try_from_sequence(record.sequence())
+        .expect("constructor should succeed")
+        .expect("prefix kmer should exist");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .record_key::<PrefixKmer64<5>>()
+        .build();
+    writer
+        .write_record_with_key(&record, &key)
+        .expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .record_key::<PrefixKmer64<5>>()
+        .build()
+        .expect("reader should build");
+
+    assert!(reader.next_record().expect("next_record should succeed"));
+    assert_eq!(reader.record_key().expect("key should decode"), key);
+    assert_eq!(reader.sequence(), record.sequence());
+}
+
+#[test]
+fn minimizer64_round_trips_through_key_only_writer() {
+    let seq = b"ACGTGCTCAGAGACTCAGAGGA";
+    let key = Minimizer64::<5, 7>::try_from_sequence(seq)
+        .expect("constructor should succeed")
+        .expect("minimizer should exist");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .record_key::<Minimizer64<5, 7>>()
+        .empty_payload()
+        .build();
+    writer.write_key_only(&key).expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .sequence_codec::<OmittedSequenceCodec>()
+        .quality_codec::<OmittedQualityCodec>()
+        .name_codec::<OmittedNameCodec>()
+        .record_key::<Minimizer64<5, 7>>()
+        .build()
+        .expect("reader should build");
+
+    let read_back = reader.next_key().expect("next_key should succeed");
+    assert_eq!(read_back, Some(key));
+    assert_eq!(reader.next_key().expect("next_key should succeed"), None);
 }
 
 #[test]
