@@ -752,6 +752,98 @@ fn minimizer64_round_trips_through_key_only_writer() {
 }
 
 #[test]
+fn minimizer_key_builder_convenience_round_trips() {
+    let record = SeqRecord::new(
+        b"read1".to_vec(),
+        b"ACGTGCTCAGAGACTCAGAGGA".to_vec(),
+        b"!!!!!!!!!!!!!!!!!!!!!!".to_vec(),
+    )
+    .expect("valid record");
+    let key = Minimizer64::<5, 7>::try_from_sequence(record.sequence())
+        .expect("constructor should succeed")
+        .expect("minimizer should exist");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .minimizer_key::<5, 7>()
+        .build();
+    writer
+        .write_record_with_key(&record, &key)
+        .expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .record_key::<Minimizer64<5, 7>>()
+        .build()
+        .expect("reader should build");
+
+    assert!(reader.next_record().expect("next_record should succeed"));
+    assert_eq!(reader.record_key().expect("key should decode"), key);
+}
+
+#[test]
+fn minimizer_key_default_builder_convenience_round_trips() {
+    let record = SeqRecord::new(
+        b"read1".to_vec(),
+        b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA".to_vec(),
+        vec![b'!'; b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA".len()],
+    )
+    .expect("valid record");
+    let key = Minimizer64::<31, 15>::try_from_sequence(record.sequence())
+        .expect("constructor should succeed")
+        .expect("minimizer should exist");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .minimizer_key_default()
+        .build();
+    writer
+        .write_record_with_key(&record, &key)
+        .expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .record_key::<Minimizer64<31, 15>>()
+        .build()
+        .expect("reader should build");
+
+    assert!(reader.next_record().expect("next_record should succeed"));
+    assert_eq!(reader.record_key().expect("key should decode"), key);
+}
+
+#[test]
+fn minimizers_preset_configures_key_only_defaults() {
+    let seq = b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA";
+    let key = Minimizer64::<31, 15>::try_from_sequence(seq)
+        .expect("constructor should succeed")
+        .expect("minimizer should exist");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder().inner(&mut buf).minimizers().build();
+    writer.write_key_only(&key).expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .sequence_codec::<OmittedSequenceCodec>()
+        .quality_codec::<OmittedQualityCodec>()
+        .name_codec::<OmittedNameCodec>()
+        .record_key::<Minimizer64<31, 15>>()
+        .build()
+        .expect("reader should build");
+
+    assert_eq!(
+        reader.next_key().expect("next_key should succeed"),
+        Some(key)
+    );
+    assert_eq!(reader.next_key().expect("next_key should succeed"), None);
+}
+
+#[test]
 fn zero_copy_reader_to_writer_pipe() {
     let records = vec![
         SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec()).expect("valid record"),

@@ -14,7 +14,7 @@ use crate::{
     config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions},
     error::DryIceError,
     format,
-    key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey},
+    key::{Bytes8Key, Bytes16Key, Minimizer64, NoRecordKey, PrefixKmer64, RecordKey},
     record::{EMPTY_RECORD, SeqRecordLike},
 };
 
@@ -211,6 +211,152 @@ impl<W, S, Q, N> DryIceWriterBuilder<W, S, Q, N, NoRecordKey> {
     #[must_use]
     pub fn bytes16_key(self) -> DryIceWriterBuilder<W, S, Q, N, Bytes16Key> {
         self.record_key::<Bytes16Key>()
+    }
+
+    /// Configure the writer to store packed canonical prefix kmer keys.
+    ///
+    /// This is convenience sugar for `record_key::<PrefixKmer64<K>>()` and does
+    /// not otherwise change payload layout or writing semantics.
+    #[must_use]
+    pub fn prefix_kmer_key<const K: u8>(self) -> DryIceWriterBuilder<W, S, Q, N, PrefixKmer64<K>> {
+        self.record_key::<PrefixKmer64<K>>()
+    }
+
+    /// Configure the writer to store packed canonical minimizer keys.
+    ///
+    /// This is convenience sugar for `record_key::<Minimizer64<K, WN>>()` and
+    /// does not otherwise change payload layout or writing semantics.
+    #[must_use]
+    pub fn minimizer_key<const K: u8, const WN: u8>(
+        self,
+    ) -> DryIceWriterBuilder<W, S, Q, N, Minimizer64<K, WN>> {
+        self.record_key::<Minimizer64<K, WN>>()
+    }
+
+    /// Configure the writer to store prefix kmer keys using the library's default parameters.
+    ///
+    /// The current default is `PrefixKmer64<31>`.
+    #[must_use]
+    pub fn prefix_kmer_key_default(self) -> DryIceWriterBuilder<W, S, Q, N, PrefixKmer64<31>> {
+        self.prefix_kmer_key::<31>()
+    }
+
+    /// Configure the writer to store minimizer keys using the library's default parameters.
+    ///
+    /// The current default is `Minimizer64<31, 15>`.
+    #[must_use]
+    pub fn minimizer_key_default(self) -> DryIceWriterBuilder<W, S, Q, N, Minimizer64<31, 15>> {
+        self.minimizer_key::<31, 15>()
+    }
+}
+
+impl<W> DryIceWriterBuilder<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey> {
+    /// Configure the writer for key-only prefix-kmer output using the default parameters.
+    ///
+    /// This preset selects `PrefixKmer64<31>` and applies `empty_payload()`. It
+    /// does not derive keys automatically; callers still write through the keyed
+    /// writer APIs such as `write_key_only()` or `write_record_with_key()`.
+    #[must_use]
+    pub fn prefix_kmers(
+        self,
+    ) -> DryIceWriterBuilder<
+        W,
+        OmittedSequenceCodec,
+        OmittedQualityCodec,
+        OmittedNameCodec,
+        PrefixKmer64<31>,
+    > {
+        self.prefix_kmer_key_default().empty_payload()
+    }
+
+    /// Configure the writer for prefix-kmer output while retaining sequences.
+    ///
+    /// This preset selects `PrefixKmer64<31>`, retains sequences, and omits
+    /// names and qualities. Callers still supply or derive the key explicitly.
+    #[must_use]
+    pub fn prefix_kmers_with_sequences(
+        self,
+    ) -> DryIceWriterBuilder<
+        W,
+        RawAsciiCodec,
+        OmittedQualityCodec,
+        OmittedNameCodec,
+        PrefixKmer64<31>,
+    > {
+        self.prefix_kmer_key_default().omit_quality().omit_names()
+    }
+
+    /// Configure the writer for prefix-kmer output while retaining names.
+    ///
+    /// This preset selects `PrefixKmer64<31>`, retains names, and omits
+    /// sequences and qualities. Callers still supply or derive the key
+    /// explicitly.
+    #[must_use]
+    pub fn prefix_kmers_with_names(
+        self,
+    ) -> DryIceWriterBuilder<
+        W,
+        OmittedSequenceCodec,
+        OmittedQualityCodec,
+        RawNameCodec,
+        PrefixKmer64<31>,
+    > {
+        self.prefix_kmer_key_default()
+            .omit_sequence()
+            .omit_quality()
+    }
+
+    /// Configure the writer for key-only minimizer output using the default parameters.
+    ///
+    /// This preset selects `Minimizer64<31, 15>` and applies `empty_payload()`.
+    /// It does not derive keys automatically; callers still write through the
+    /// keyed writer APIs such as `write_key_only()` or `write_record_with_key()`.
+    #[must_use]
+    pub fn minimizers(
+        self,
+    ) -> DryIceWriterBuilder<
+        W,
+        OmittedSequenceCodec,
+        OmittedQualityCodec,
+        OmittedNameCodec,
+        Minimizer64<31, 15>,
+    > {
+        self.minimizer_key_default().empty_payload()
+    }
+
+    /// Configure the writer for minimizer output while retaining sequences.
+    ///
+    /// This preset selects `Minimizer64<31, 15>`, retains sequences, and omits
+    /// names and qualities. Callers still supply or derive the key explicitly.
+    #[must_use]
+    pub fn minimizers_with_sequences(
+        self,
+    ) -> DryIceWriterBuilder<
+        W,
+        RawAsciiCodec,
+        OmittedQualityCodec,
+        OmittedNameCodec,
+        Minimizer64<31, 15>,
+    > {
+        self.minimizer_key_default().omit_quality().omit_names()
+    }
+
+    /// Configure the writer for minimizer output while retaining names.
+    ///
+    /// This preset selects `Minimizer64<31, 15>`, retains names, and omits
+    /// sequences and qualities. Callers still supply or derive the key
+    /// explicitly.
+    #[must_use]
+    pub fn minimizers_with_names(
+        self,
+    ) -> DryIceWriterBuilder<
+        W,
+        OmittedSequenceCodec,
+        OmittedQualityCodec,
+        RawNameCodec,
+        Minimizer64<31, 15>,
+    > {
+        self.minimizer_key_default().omit_sequence().omit_quality()
     }
 }
 

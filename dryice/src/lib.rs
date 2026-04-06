@@ -103,6 +103,33 @@
 //! # }
 //! ```
 //!
+//! # Writing minimizer keys with the builder conveniences
+//!
+//! ```
+//! use dryice::{DryIceWriter, Minimizer64, SeqRecord};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(&mut buf)
+//!     .minimizers_with_sequences()
+//!     .build();
+//!
+//! let record = SeqRecord::new(
+//!     b"read1".to_vec(),
+//!     b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA".to_vec(),
+//!     vec![b'!'; 53],
+//! )?;
+//!
+//! if let Some(key) = Minimizer64::<31, 15>::try_from_sequence(record.sequence())? {
+//!     writer.write_record_with_key(&record, &key)?;
+//! }
+//!
+//! writer.finish()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Reading records (zero-copy)
 //!
 //! ```
