@@ -233,6 +233,20 @@ impl<S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey> MmapDryIceRe
         block.verify_record_key::<K>()?;
         K::decode_from(block.current_record_key_bytes()?)
     }
+
+    /// Advance to the next record and return only its key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if advancing to the next record fails or if the key
+    /// section is missing or incompatible with `K`.
+    pub fn next_key(&mut self) -> Result<Option<K>, DryIceError> {
+        if self.next_record()? {
+            Ok(Some(self.record_key()?))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl<S: SequenceCodec, Q: QualityCodec, N: NameCodec, K> SeqRecordLike

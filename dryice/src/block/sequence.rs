@@ -78,6 +78,37 @@ pub trait SequenceCodec: Sized {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RawAsciiCodec;
 
+/// Omitted sequence storage.
+///
+/// This codec stores no sequence payload bytes and always decodes to an empty
+/// byte string. It is intended for payload-light temporary files where
+/// sequence data is deliberately absent.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OmittedSequenceCodec;
+
+impl SequenceCodec for OmittedSequenceCodec {
+    const TYPE_TAG: [u8; 16] = *b"dryi:seq:omittd!";
+    const LOSSY: bool = true;
+
+    fn encode_into(_sequence: &[u8], _output: &mut Vec<u8>) -> Result<(), DryIceError> {
+        Ok(())
+    }
+
+    fn decode_into(
+        _encoded: &[u8],
+        original_len: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<(), DryIceError> {
+        if original_len != 0 {
+            return Err(DryIceError::CorruptBlockLayout {
+                message: "omitted sequence requires zero original length",
+            });
+        }
+        output.clear();
+        Ok(())
+    }
+}
+
 impl SequenceCodec for RawAsciiCodec {
     const TYPE_TAG: [u8; 16] = *b"dryi:seq:raw-asc";
     const LOSSY: bool = false;

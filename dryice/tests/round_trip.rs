@@ -2,9 +2,9 @@
 
 use dryice::{
     BinnedQualityCodec, BlockLayoutOptions, BlockSizePolicy, Bytes8Key, Bytes16Key, DryIceReader,
-    DryIceWriter, DryIceWriterOptions, OmittedQualityCodec, QualityCodec, RawAsciiCodec,
-    RawNameCodec, RawQualityCodec, RecordKey, SeqRecord, SeqRecordExt, SeqRecordLike,
-    SplitNameCodec,
+    DryIceWriter, DryIceWriterOptions, EMPTY_RECORD, OmittedNameCodec, OmittedQualityCodec,
+    OmittedSequenceCodec, QualityCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec, RecordKey,
+    SeqRecord, SeqRecordExt, SeqRecordLike, SplitNameCodec,
     fields::{Key, Name, Quality, Sequence},
 };
 use proptest::prelude::*;
@@ -538,6 +538,103 @@ fn two_bit_exact_sequence_decode_works_with_omitted_qualities() {
 
     let expected: Vec<Vec<u8>> = records.iter().map(|r| r.sequence().to_vec()).collect();
     assert_eq!(read_back, expected);
+}
+
+#[test]
+fn omitted_sequence_codec_round_trips_empty_sequence() {
+    let records = [
+        SeqRecord::new(b"r1".to_vec(), b"".to_vec(), b"".to_vec()).expect("valid record"),
+        SeqRecord::new(b"r2".to_vec(), b"".to_vec(), b"".to_vec()).expect("valid record"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .omit_sequence()
+        .build();
+    for record in &records {
+        writer.write_record(record).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .sequence_codec::<OmittedSequenceCodec>()
+        .build()
+        .expect("reader should build");
+
+    let mut read_back = Vec::new();
+    while reader.next_record().expect("next_record should succeed") {
+        read_back.push(reader.to_seq_record().expect("record should decode"));
+    }
+
+    assert_records_equal(&records, &read_back);
+}
+
+#[test]
+fn key_only_round_trip_with_empty_payload() {
+    let keys = vec![
+        Bytes16Key(*b"0000000000000001"),
+        Bytes16Key(*b"0000000000000002"),
+    ];
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .bytes16_key()
+        .empty_payload()
+        .build();
+    for key in &keys {
+        writer.write_key_only(key).expect("write should succeed");
+    }
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .sequence_codec::<OmittedSequenceCodec>()
+        .quality_codec::<OmittedQualityCodec>()
+        .name_codec::<OmittedNameCodec>()
+        .record_key::<Bytes16Key>()
+        .build()
+        .expect("reader should build");
+
+    let mut read_back = Vec::new();
+    while let Some(key) = reader.next_key().expect("next_key should succeed") {
+        read_back.push(key);
+    }
+
+    assert_eq!(read_back, keys);
+}
+
+#[test]
+fn key_only_round_trip_still_reads_empty_row_fields() {
+    let key = Bytes8Key(*b"keyonly!");
+
+    let mut buf = Vec::new();
+    let mut writer = DryIceWriter::builder()
+        .inner(&mut buf)
+        .bytes8_key()
+        .empty_payload()
+        .build();
+    writer
+        .write_record_with_key(&EMPTY_RECORD, &key)
+        .expect("write should succeed");
+    writer.finish().expect("finish should succeed");
+
+    let mut reader = DryIceReader::builder()
+        .inner(buf.as_slice())
+        .sequence_codec::<OmittedSequenceCodec>()
+        .quality_codec::<OmittedQualityCodec>()
+        .name_codec::<OmittedNameCodec>()
+        .record_key::<Bytes8Key>()
+        .build()
+        .expect("reader should build");
+
+    assert!(reader.next_record().expect("next_record should succeed"));
+    assert_eq!(reader.name(), b"");
+    assert_eq!(reader.sequence(), b"");
+    assert_eq!(reader.quality(), b"");
+    assert_eq!(reader.record_key().expect("key should decode"), key);
 }
 
 #[test]

@@ -83,6 +83,26 @@
 //! # }
 //! ```
 //!
+//! # Writing key-only files with empty payload
+//!
+//! ```
+//! use dryice::{Bytes16Key, DryIceWriter};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(&mut buf)
+//!     .bytes16_key()
+//!     .empty_payload()
+//!     .build();
+//!
+//! writer.write_key_only(&Bytes16Key(*b"0000000000000001"))?;
+//! writer.write_key_only(&Bytes16Key(*b"0000000000000002"))?;
+//! writer.finish()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Reading records (zero-copy)
 //!
 //! ```
@@ -102,6 +122,39 @@
 //!     let _name = reader.name();
 //!     let _seq = reader.sequence();
 //!     let _qual = reader.quality();
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Reading keys directly
+//!
+//! ```
+//! use dryice::{
+//!     Bytes16Key, DryIceReader, DryIceWriter, OmittedNameCodec, OmittedQualityCodec,
+//!     OmittedSequenceCodec,
+//! };
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let mut buf = Vec::new();
+//! let mut writer = DryIceWriter::builder()
+//!     .inner(&mut buf)
+//!     .bytes16_key()
+//!     .empty_payload()
+//!     .build();
+//! writer.write_key_only(&Bytes16Key(*b"0000000000000001"))?;
+//! writer.finish()?;
+//!
+//! let mut reader = DryIceReader::builder()
+//!     .inner(buf.as_slice())
+//!     .sequence_codec::<OmittedSequenceCodec>()
+//!     .quality_codec::<OmittedQualityCodec>()
+//!     .name_codec::<OmittedNameCodec>()
+//!     .record_key::<Bytes16Key>()
+//!     .build()?;
+//!
+//! while let Some(key) = reader.next_key()? {
+//!     let _ = key;
 //! }
 //! # Ok(())
 //! # }
@@ -236,7 +289,9 @@ pub use async_io::{AsyncDryIceReader, AsyncDryIceWriter};
 pub use block::{
     name::{NameCodec, OmittedNameCodec, RawNameCodec, SplitNameCodec},
     quality::{BinnedQualityCodec, OmittedQualityCodec, QualityCodec, RawQualityCodec},
-    sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec, TwoBitLossyNCodec},
+    sequence::{
+        OmittedSequenceCodec, RawAsciiCodec, SequenceCodec, TwoBitExactCodec, TwoBitLossyNCodec,
+    },
 };
 pub use config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions};
 pub use error::DryIceError;
@@ -244,4 +299,4 @@ pub use io::{DryIceReader, DryIceRecords, DryIceWriter, SelectedDryIceReader, Se
 pub use key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey};
 #[cfg(feature = "mmap")]
 pub use mmap_io::MmapDryIceReader;
-pub use record::{SeqRecord, SeqRecordExt, SeqRecordLike};
+pub use record::{EMPTY_RECORD, EmptyRecord, SeqRecord, SeqRecordExt, SeqRecordLike};

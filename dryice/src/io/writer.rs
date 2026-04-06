@@ -7,13 +7,15 @@ use crate::{
         BlockBuilder, BlockBuilderConfig,
         name::{NameCodec, OmittedNameCodec, RawNameCodec, SplitNameCodec},
         quality::{BinnedQualityCodec, OmittedQualityCodec, QualityCodec, RawQualityCodec},
-        sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec, TwoBitLossyNCodec},
+        sequence::{
+            OmittedSequenceCodec, RawAsciiCodec, SequenceCodec, TwoBitExactCodec, TwoBitLossyNCodec,
+        },
     },
     config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions},
     error::DryIceError,
     format,
     key::{Bytes8Key, Bytes16Key, NoRecordKey, RecordKey},
-    record::SeqRecordLike,
+    record::{EMPTY_RECORD, SeqRecordLike},
 };
 
 /// Private marker type used to track a missing writer target in the builder.
@@ -97,6 +99,37 @@ impl<W, Q, N, K> DryIceWriterBuilder<W, RawAsciiCodec, Q, N, K> {
     #[must_use]
     pub fn two_bit_lossy_n(self) -> DryIceWriterBuilder<W, TwoBitLossyNCodec, Q, N, K> {
         self.sequence_codec::<TwoBitLossyNCodec>()
+    }
+
+    /// Configure the writer to omit sequence data entirely.
+    ///
+    /// Records written through this builder must still satisfy the normal
+    /// sequence/quality length invariant, which for omitted sequence payloads
+    /// means writing empty sequence and quality fields.
+    #[must_use]
+    pub fn omit_sequence(self) -> DryIceWriterBuilder<W, OmittedSequenceCodec, Q, N, K> {
+        self.sequence_codec::<OmittedSequenceCodec>()
+    }
+}
+
+impl<W, K> DryIceWriterBuilder<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, K> {
+    /// Configure the writer to omit names, sequences, and qualities.
+    ///
+    /// This is convenience sugar over the three orthogonal omission controls:
+    /// `omit_sequence()`, `omit_quality()`, and `omit_names()`.
+    #[must_use]
+    pub fn empty_payload(
+        self,
+    ) -> DryIceWriterBuilder<W, OmittedSequenceCodec, OmittedQualityCodec, OmittedNameCodec, K>
+    {
+        DryIceWriterBuilder {
+            inner: self.inner,
+            target_block_records: self.target_block_records,
+            _codec: PhantomData,
+            _quality: PhantomData,
+            _name: PhantomData,
+            _key: PhantomData,
+        }
     }
 }
 
@@ -369,6 +402,16 @@ impl<W: Write, S: SequenceCodec, Q: QualityCodec, N: NameCodec, K: RecordKey>
         }
 
         Ok(())
+    }
+
+    /// Write a key-only record with empty payload fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file header cannot be written, if the key cannot
+    /// be encoded, or if flushing the current block fails.
+    pub fn write_key_only(&mut self, key: &K) -> Result<(), DryIceError> {
+        self.write_record_with_key(&EMPTY_RECORD, key)
     }
 }
 

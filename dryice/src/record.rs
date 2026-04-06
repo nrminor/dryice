@@ -215,3 +215,24 @@ pub trait SeqRecordExt: SeqRecordLike {
 }
 
 impl<T: SeqRecordLike + ?Sized> SeqRecordExt for T {}
+
+/// A zero-payload read-like record with empty name, sequence, and quality.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EmptyRecord;
+
+impl SeqRecordLike for EmptyRecord {
+    fn name(&self) -> &[u8] {
+        b""
+    }
+
+    fn sequence(&self) -> &[u8] {
+        b""
+    }
+
+    fn quality(&self) -> &[u8] {
+        b""
+    }
+}
+
+/// Shared empty record value for key-only writes and tests.
+pub const EMPTY_RECORD: EmptyRecord = EmptyRecord;
