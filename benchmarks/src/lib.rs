@@ -1,6 +1,6 @@
 //! Shared utilities for dryice benchmarks.
 
-use dryice::{Bytes8Key, SeqRecord};
+use dryice::{Bytes8Key, DefaultMinimizer64, SeqRecord};
 
 /// Generate a batch of realistic Illumina-like sequencing records.
 ///
@@ -57,6 +57,19 @@ pub fn compute_sort_key(sequence: &[u8]) -> Bytes8Key {
         key[i] = b;
     }
     Bytes8Key(key)
+}
+
+/// Compute the built-in default minimizer key from a sequence.
+///
+/// # Panics
+///
+/// Panics if default minimizer key derivation returns an unexpected error. The
+/// benchmark helpers treat invalid sequences as producing no key, but any true
+/// derivation failure should be surfaced loudly during benchmark setup.
+#[must_use]
+pub fn compute_minimizer_key(sequence: &[u8]) -> Option<DefaultMinimizer64> {
+    DefaultMinimizer64::try_from_sequence(sequence)
+        .expect("default minimizer key derivation should not fail unexpectedly")
 }
 
 /// Total payload size of a record set in bytes (name + sequence + quality).

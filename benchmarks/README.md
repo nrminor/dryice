@@ -36,6 +36,8 @@ There are three benchmark suites.
 
 **round_trip** measures the combined write-then-read cycle, which is the most representative metric for spill/reload workflows. The round-trip suite uses `dryice compact` as the full-feature representative configuration rather than enumerating every intermediate combination.
 
+In addition to the core format and codec comparisons, the benchmark crate also includes a small kmer-workflow slice. These cases are not meant to replace the main format story; they exist to show that the newer kmer-derived key families are practical, performant applications of the same record-key and payload-shaping primitives already benchmarked elsewhere.
+
 ## Formats compared
 
 | Format               | Description                                                                                                                                    |
@@ -128,6 +130,20 @@ The quality-only case deserves especially careful interpretation. It is fast in 
 The benchmark matrix is intentionally uneven in a few places. `dryice two-bit exact` appears in write throughput so we can isolate the cost of sequence re-encoding alone before layering on quality and name codecs. The read suite now adds a few diagnostic dryice-only cases so we can attribute costs more honestly instead of bundling every codec and access pattern into one `compact` number. `dryice compact` is still the full-feature representative configuration for the round-trip benchmark.
 
 Record keys add negligible overhead to both write and read paths — the key section is a simple fixed-width append/read alongside the existing payloads.
+
+## Kmer-oriented workflow benchmarks
+
+The newer kmer-oriented benchmarks focus on one concrete family first: default packed minimizer keys. That keeps the showcase grounded and avoids turning the benchmark suite into a giant matrix of every possible selector family and payload shape combination.
+
+- `dryice_minimizer_key_only` shows the most compact workflow: persist one minimizer key per record with empty payload
+- `dryice_minimizer_names` shows a partial-payload workflow where only names and minimizer keys are retained
+
+Benchmarks are limited to write throughput for now. Read throughput is tricky to measure absent real I/O because reading bitpacked kmers is _extremely_ cheap, essentially just putting integers on the stack. Benchmarks for read throughput will be added in the future when we have a better idea of how to do so usefully.
+
+| Workflow                 |     Throughput |
+| ------------------------ | -------------: |
+| minimizer key-only write | **15.8 GiB/s** |
+| minimizer + names write  | **15.7 GiB/s** |
 
 ## Future work
 

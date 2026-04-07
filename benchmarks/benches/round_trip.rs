@@ -4,14 +4,52 @@ use std::io::Read;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use dryice::{
-    BinnedQualityCodec, DryIceReader, DryIceWriter, SeqRecordLike, SplitNameCodec, TwoBitExactCodec,
+    BinnedQualityCodec, DefaultMinimizer64, DryIceReader, DryIceWriter, OmittedNameCodec,
+    OmittedQualityCodec, OmittedSequenceCodec, SeqRecordLike, SplitNameCodec, TwoBitExactCodec,
 };
 use dryice_benchmarks::{
-    generate_records, payload_size, read_fastq, read_raw_binary, write_fastq, write_raw_binary,
+    compute_minimizer_key, generate_records, payload_size, read_fastq, read_raw_binary,
+    write_fastq, write_raw_binary,
 };
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 
 const RECORD_COUNT: usize = 10_000;
+
+fn bench_round_trip_minimizer_workflow(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    records: &[dryice::SeqRecord],
+    size: usize,
+) {
+    group.bench_function(
+        BenchmarkId::new("dryice_minimizer_key_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut buf = Vec::with_capacity(size);
+                let mut writer = DryIceWriter::builder().inner(&mut buf).minimizers().build();
+                for record in records {
+                    if let Some(key) = compute_minimizer_key(record.sequence()) {
+                        writer.write_key_only(&key).expect("write should succeed");
+                    }
+                }
+                writer.finish().expect("finish should succeed");
+
+                let mut reader = DryIceReader::builder()
+                    .inner(buf.as_slice())
+                    .sequence_codec::<OmittedSequenceCodec>()
+                    .quality_codec::<OmittedQualityCodec>()
+                    .name_codec::<OmittedNameCodec>()
+                    .record_key::<DefaultMinimizer64>()
+                    .build()
+                    .expect("reader should open");
+                let mut count = 0u64;
+                while let Some(key) = reader.next_key().expect("next_key should succeed") {
+                    count += u64::from(key.0.count_ones());
+                }
+                count
+            });
+        },
+    );
+}
 
 fn bench_round_trip(c: &mut Criterion) {
     let records = generate_records(RECORD_COUNT);
@@ -111,6 +149,8 @@ fn bench_round_trip(c: &mut Criterion) {
             count
         });
     });
+
+    bench_round_trip_minimizer_workflow(&mut group, &records, size);
 
     group.finish();
 }

@@ -47,7 +47,8 @@ fn main() -> Result<(), dryice::DryIceError> {
 
     for record in &records {
         if let Some(key) = DefaultPrefixKmer64::try_from_sequence(record.sequence())? {
-            let bucket = (key.0 as usize) % writers.len();
+            let bucket = usize::try_from(key.0).expect("prefix kmer key should fit in usize")
+                % writers.len();
             writers[bucket].write_record_with_key(record, &key)?;
         }
     }

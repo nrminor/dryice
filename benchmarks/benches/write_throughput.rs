@@ -5,11 +5,55 @@ use std::io::Write;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use dryice::DryIceWriter;
 use dryice_benchmarks::{
-    compute_sort_key, generate_records, payload_size, write_fastq, write_raw_binary,
+    compute_minimizer_key, compute_sort_key, generate_records, payload_size, write_fastq,
+    write_raw_binary,
 };
 use flate2::{Compression, write::GzEncoder};
 
 const RECORD_COUNT: usize = 10_000;
+
+fn bench_write_minimizer_workflows(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    records: &[dryice::SeqRecord],
+    size: usize,
+) {
+    group.bench_function(
+        BenchmarkId::new("dryice_minimizer_key_only", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut buf = Vec::with_capacity(size);
+                let mut writer = DryIceWriter::builder().inner(&mut buf).minimizers().build();
+                for record in records {
+                    if let Some(key) = compute_minimizer_key(record.sequence()) {
+                        writer.write_key_only(&key).expect("write should succeed");
+                    }
+                }
+                writer.finish().expect("finish should succeed");
+            });
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("dryice_minimizer_names", RECORD_COUNT),
+        |b| {
+            b.iter(|| {
+                let mut buf = Vec::with_capacity(size);
+                let mut writer = DryIceWriter::builder()
+                    .inner(&mut buf)
+                    .minimizers_with_names()
+                    .build();
+                for record in records {
+                    if let Some(key) = compute_minimizer_key(record.sequence()) {
+                        writer
+                            .write_record_with_key(record, &key)
+                            .expect("write should succeed");
+                    }
+                }
+                writer.finish().expect("finish should succeed");
+            });
+        },
+    );
+}
 
 fn bench_write(c: &mut Criterion) {
     let records = generate_records(RECORD_COUNT);
@@ -105,6 +149,8 @@ fn bench_write(c: &mut Criterion) {
             writer.finish().expect("finish should succeed");
         });
     });
+
+    bench_write_minimizer_workflows(&mut group, &records, size);
 
     group.finish();
 }
