@@ -106,7 +106,7 @@
 //! # Writing minimizer keys with the builder conveniences
 //!
 //! ```
-//! use dryice::{DryIceWriter, Minimizer64, SeqRecord};
+//! use dryice::{DefaultMinimizer64, DryIceWriter, SeqRecord};
 //!
 //! # fn example() -> Result<(), dryice::DryIceError> {
 //! let mut buf = Vec::new();
@@ -121,7 +121,7 @@
 //!     vec![b'!'; 53],
 //! )?;
 //!
-//! if let Some(key) = Minimizer64::<31, 15>::try_from_sequence(record.sequence())? {
+//! if let Some(key) = DefaultMinimizer64::try_from_sequence(record.sequence())? {
 //!     writer.write_record_with_key(&record, &key)?;
 //! }
 //!
@@ -324,6 +324,8 @@ pub use config::{BlockLayoutOptions, BlockSizePolicy, DryIceWriterOptions};
 pub use error::DryIceError;
 pub use io::{DryIceReader, DryIceRecords, DryIceWriter, SelectedDryIceReader, SelectedRecord};
 pub use key::{Bytes8Key, Bytes16Key, KmerKey, Minimizer64, NoRecordKey, PrefixKmer64, RecordKey};
+pub type DefaultPrefixKmer64 = PrefixKmer64<31>;
+pub type DefaultMinimizer64 = Minimizer64<31, 15>;
 #[cfg(feature = "mmap")]
 pub use mmap_io::MmapDryIceReader;
 pub use record::{EMPTY_RECORD, EmptyRecord, SeqRecord, SeqRecordExt, SeqRecordLike};
