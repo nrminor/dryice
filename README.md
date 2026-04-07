@@ -7,7 +7,7 @@
 
 ## Overview
 
-DryIce is a disk storage engine and file format optimized for temporary genomic data. Its purpose is to leverage extremely fast movement of sequence data on and off of disk to make larger-than-memory workloads more tractable. Want to do parallel comparisons between kmer hashes across cores? Want to do disk-spilling global sequence sorting? Want to cheaply scan for sequence matches across partitioned reads? DryIce is meant for these and more use cases.
+DryIce is a disk storage engine and file format optimized for temporary genomic data. Its purpose is to leverage extremely fast movement of sequence data on and off of disk to make larger-than-memory workloads more tractable. Want to do parallel comparisons between kmers across cores? Want to do disk-spilling global sequence sorting? Want to cheaply scan for sequence matches across partitioned reads? DryIce is meant for these and more use cases.
 
 > [!NOTE]
 > DryIce is emphatically _not_ an archival genomics file format, a replacement for BAM or FASTQ, or a general-purpose columnar analytics format. Its niche is quick _temporary files_, where FASTQ, BAM, and text data formats may be ill-suited for rapid I/O, parsing, and searching.
@@ -36,7 +36,7 @@ just check  # runs fmt, clippy, tests, and doc checks
 
 DryIce organizes data onto disk with two priorities: 1) make I/O fast, and 2) use a batched, data-oriented design to get out of the CPU's way once data is in-memory. In line with these priorities, `.dryice` files feature a rich header followed by data blocks, each of which carry their own metadata, including offsets for accessing each sequence "record", as well as payloads of contiguous bytes. As mentioned, these bytes can be encoded/decoded with a variety of out-of-the-box codecs as well as user-defined codecs--DryIce is your oyster!
 
-One unique feature of `.dryice` data is that it can store arrays of unique keys associated with each record in the payload. These keys can be used for sorting, filtering, searching, etc. without needing each record's sequence or quality score data itself. For an application like global FASTQ sorting, this means records can be sorted purely with their record keys rather than comparing whole sequences or generating kmers on the fly.
+One unique feature of `.dryice` data is that it can store arrays of keys associated with each record in the payload. These keys can be used for sorting, filtering, searching, etc. without needing each record's sequence or quality score data itself. For an application like global FASTQ sorting, this means records can be sorted purely with their record keys rather than comparing whole sequences or generating kmers on the fly.
 Below is an ASCII diagram of the file format followed by descriptions of each section.
 
 ```text
@@ -119,7 +119,7 @@ Each block contains a fixed-width record index with one 24-byte entry per record
 
 Record keys are optional fixed-width accelerator values stored in a dense array alongside the record payloads. They are designed for workflows where records need to be compared or ordered by a derived value — such as a minimizer hash, canonical k-mer, or partition identifier — without touching the full sequence or quality data.
 
-The key system is trait-based: the `RecordKey` trait defines the width, type tag, and encode/decode behavior, and users can implement their own key types. The writer stores the key's type tag and width in the block header, and the reader verifies them at load time. Built-in key types (`Bytes8Key` and `Bytes16Key`) are provided for common use cases.
+The key system is trait-based: the `RecordKey` trait defines the width, type tag, and encode/decode behavior, and users can implement their own key types. The writer stores the key's type tag and width in the block header, and the reader verifies them at load time. Built-in key types (`Bytes8Key` and `Bytes16Key`) are provided for common use cases, and DryIce now also ships with packed canonical kmer-derived key families for prefix k-mers and minimizers.
 
 For external sorting, this means the merge phase can compare 8-byte or 16-byte keys in a min-heap without ever touching the sequence payloads — a major performance advantage over approaches that require reparsing or recomputing sort criteria on every comparison.
 
@@ -183,6 +183,53 @@ DryIce ships with built-in codecs for all three record fields, plus built-in rec
 | `Bytes8Key`  | 8 bytes      | General-purpose 8-byte fixed-width key.                                                 |
 | `Bytes16Key` | 16 bytes     | General-purpose 16-byte fixed-width key.                                                |
 | Custom       | User-defined | Implement the `RecordKey` trait with your own width, type tag, and encode/decode logic. |
+
+### Built-in kmer-derived key families
+
+DryIce includes built-in packed canonical key families for a few common kmer-based workflows:
+
+- `PrefixKmer64<K>`
+- `Minimizer64<K, W>`
+
+These are still just `RecordKey`s, so they compose with the same keyed writer and reader APIs as any other accelerator key.
+
+At the default-settings level, the builder can choose a sensible minimizer key type and a sensible payload shape for you:
+
+```rust
+use dryice::{DefaultMinimizer64, DryIceWriter, SeqRecord};
+
+let mut writer = DryIceWriter::builder()
+    .inner(Vec::new())
+    .minimizers_with_sequences() // use minimizers with default settings as keys, and only keep sequence payloads
+    .build();
+
+// Equivalent builder choices:
+//   .minimizer_key_default()
+//   .omit_quality()
+//   .omit_names()
+
+let record = SeqRecord::new(
+    b"read1".to_vec(),
+    b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA".to_vec(),
+    vec![b'!'; 53],
+)?;
+
+if let Some(key) = DefaultMinimizer64::try_from_sequence(record.sequence())? {
+    writer.write_record_with_key(&record, &key)?;
+}
+```
+
+At the power-user level, the same family can be selected with fully explicit parameters to guide how selection takes place for each kmer key:
+
+```rust
+let writer = DryIceWriter::builder()
+    .inner(Vec::new())
+    .minimizer_key::<31, 15>() // use a minimizer from 31-mers in 15 bp windows
+    .build();
+
+// Equivalent to:
+//   .record_key::<Minimizer64<31, 15>>()
+```
 
 ## Examples
 
