@@ -53,6 +53,10 @@
 !/dryice/examples/zero_copy_pipe.rs
 !/dryice/examples/custom_codec.rs
 !/dryice/examples/external_merge_sort.rs
+!/dryice/examples/kmer_keys.rs
+!/dryice/examples/key_only_kmers.rs
+!/dryice/examples/kmer_name_pairs.rs
+!/dryice/examples/kmer_partitioning.rs
 !/dryice/examples/noodles_adapter.rs
 !/dryice/examples/rust_bio_adapter.rs
 !/dryice/examples/README.md

@@ -2,6 +2,22 @@
 
 These examples demonstrate the primary workflows that `dryice` is designed to support. Each one is a standalone Rust program that can be run with `cargo run --example <name>`.
 
+## kmer_keys
+
+The flagship example for the new kmer-derived key families and their progressive-disclosure ergonomics. This example shows how built-in packed canonical key families for prefixes and minimizers compose with the normal keyed writer and reader APIs, while also demonstrating the builder conveniences that reduce type noise without changing the underlying storage model.
+
+## key_only_kmers
+
+This is the most compact kmer-oriented workflow currently supported by `dryice`: keep exactly one derived key per record and omit the row payload entirely. The example writes only minimizer keys to disk and reads them back with `next_key()`, demonstrating how the new empty-payload APIs support very small, laptop-friendly temporary files for later stages of a pipeline.
+
+## kmer_name_pairs
+
+This example shows that `dryice` now supports more than the two extremes of “full reads” and “key-only files”. It writes minimizer keys while retaining only record names, making the partial-payload story concrete and demonstrating how users can keep lightweight traceability without paying to persist full sequences or qualities.
+
+## kmer_partitioning
+
+This example upgrades the old first-base partitioning idea into a more bioinformatics-native flow by deriving packed canonical prefix kmer keys and using them to bucket records. Each bucket keeps names plus keys only, showing how real derived genomic features can drive temporary partitioning workflows directly.
+
 ## spill_reload
 
 The most fundamental `dryice` pattern: spilling a batch of sequencing records to a temporary buffer and reloading them later. This is the building block for any out-of-core workflow where data needs to move to disk and back without paying FASTQ reparse costs. The example generates 100 synthetic records, spills them with configurable block sizes, and reloads them using both the zero-copy primary path and the owned-record convenience iterator, verifying exact round-trip fidelity.
@@ -20,7 +36,7 @@ Many sequencing workflows need to group reads into buckets before further proces
 
 ## record_keys
 
-Record keys are fixed-width accelerator values stored alongside each record in a `dryice` file. They are designed for workflows where records need to be compared or ordered by a derived value without touching the full payload. This example writes four records with 8-byte keys computed from their sequences, then reads them back and prints each record's key, showing how keys are stored, retrieved, and associated with their records through the type system.
+Record keys are fixed-width accelerator values stored alongside each record in a `dryice` file. They are designed for workflows where records need to be compared or ordered by a derived value without touching the full payload. This example remains the generic foundation example: it writes four records with simple 8-byte keys computed from their sequences, then reads them back and prints each record's key, showing the underlying mechanism that the newer kmer-focused examples build on.
 
 ## zero_copy_pipe
 
