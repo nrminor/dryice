@@ -90,6 +90,34 @@ const records = reader.records();
 console.log(records[0].key);
 ```
 
+### Kmer-oriented conveniences
+
+```typescript
+import {
+  WriterBuilder,
+  defaultMinimizerKey,
+  defaultPrefixKmerKey,
+} from "./api.js";
+
+const sequence = Buffer.from("ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA");
+const key = defaultMinimizerKey(sequence);
+
+const writer = new WriterBuilder()
+  .minimizersWithNames()
+  .build();
+
+if (key) {
+  writer.writeRecordWithKey(Buffer.from("read1"), Buffer.from(""), Buffer.from(""), key);
+}
+```
+
+The kmer-oriented builder presets are wrapper-friendly shorthand for common key + payload-shaping choices:
+
+- `prefixKmers()` / `prefixKmersWithSequences()` / `prefixKmersWithNames()`
+- `minimizers()` / `minimizersWithSequences()` / `minimizersWithNames()`
+
+The helper functions `defaultPrefixKmerKey(...)` and `defaultMinimizerKey(...)` return the packed 8-byte default key representations directly as `Buffer | null` so Node/TypeScript users do not need to work with the Rust key types themselves.
+
 ## API
 
 The package uses a handwritten public TypeScript facade layered on top of the generated NAPI bindings. The main types are:
@@ -97,6 +125,7 @@ The package uses a handwritten public TypeScript facade layered on top of the ge
 - `Writer` / `WriterBuilder` — write records with configurable codecs and keys
 - `Reader` / `ReaderBuilder` — read records with codec verification and optional selective decoding
 - `ProjectedRecord<F>` — a projection-aware record type used by the TypeScript facade for `select(...)`
+- `defaultPrefixKmerKey` / `defaultMinimizerKey` — helper functions for the built-in default packed kmer key representations
 
 ## About dryice
 

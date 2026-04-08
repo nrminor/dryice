@@ -4,8 +4,9 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
 use dryice::{
-    BinnedQualityCodec, Bytes8Key, DryIceError, DryIceReader as RustReader,
-    DryIceWriter as RustWriter, NoRecordKey, SelectedDryIceReader as RustSelectedReader,
+    BinnedQualityCodec, Bytes8Key, DefaultMinimizer64, DefaultPrefixKmer64, DryIceError,
+    DryIceReader as RustReader, DryIceWriter as RustWriter, NoRecordKey, OmittedNameCodec,
+    OmittedQualityCodec, OmittedSequenceCodec, SelectedDryIceReader as RustSelectedReader,
     SeqRecordLike, SplitNameCodec, TwoBitExactCodec, TwoBitLossyNCodec,
     fields::{Key as SelectKey, Name as SelectName, Quality as SelectQuality},
     fields::{Sequence as SelectSequence, SequenceKey as SelectSequenceKey},
@@ -47,6 +48,9 @@ macro_rules! dispatch_all_writers {
             WriterInner::TwoBitBinnedSplit(w) => w.$method($($arg),*),
             WriterInner::LossyBinnedSplit(w) => w.$method($($arg),*),
             WriterInner::RawRawRawB8(w) => w.$method($($arg),*),
+            WriterInner::RawOmitOmitB8(w) => w.$method($($arg),*),
+            WriterInner::RawSeqOnlyB8(w) => w.$method($($arg),*),
+            WriterInner::RawNameOnlyB8(w) => w.$method($($arg),*),
             WriterInner::TwoBitBinnedSplitB8(w) => w.$method($($arg),*),
         }
     };
@@ -60,6 +64,9 @@ macro_rules! dispatch_all_readers {
             ReaderInner::TwoBitBinnedSplit(r) => r.$method($($arg),*),
             ReaderInner::LossyBinnedSplit(r) => r.$method($($arg),*),
             ReaderInner::RawRawRawB8(r) => r.$method($($arg),*),
+            ReaderInner::RawOmitOmitB8(r) => r.$method($($arg),*),
+            ReaderInner::RawSeqOnlyB8(r) => r.$method($($arg),*),
+            ReaderInner::RawNameOnlyB8(r) => r.$method($($arg),*),
             ReaderInner::TwoBitBinnedSplitB8(r) => r.$method($($arg),*),
         }
     };
@@ -75,6 +82,13 @@ enum WriterInner {
         RustWriter<W, TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec, NoRecordKey>,
     ),
     RawRawRawB8(RustWriter<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key>),
+    RawOmitOmitB8(
+        RustWriter<W, OmittedSequenceCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>,
+    ),
+    RawSeqOnlyB8(RustWriter<W, RawAsciiCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>),
+    RawNameOnlyB8(
+        RustWriter<W, OmittedSequenceCodec, OmittedQualityCodec, RawNameCodec, Bytes8Key>,
+    ),
     TwoBitBinnedSplitB8(
         RustWriter<W, TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec, Bytes8Key>,
     ),
@@ -87,11 +101,13 @@ impl WriterInner {
             Self::TwoBitRawRaw(w) => w.write_record(record),
             Self::TwoBitBinnedSplit(w) => w.write_record(record),
             Self::LossyBinnedSplit(w) => w.write_record(record),
-            Self::RawRawRawB8(_) | Self::TwoBitBinnedSplitB8(_) => {
-                Err(DryIceError::InvalidWriterConfiguration(
-                    "use write_record_with_key for keyed writers",
-                ))
-            },
+            Self::RawRawRawB8(_)
+            | Self::RawOmitOmitB8(_)
+            | Self::RawSeqOnlyB8(_)
+            | Self::RawNameOnlyB8(_)
+            | Self::TwoBitBinnedSplitB8(_) => Err(DryIceError::InvalidWriterConfiguration(
+                "use write_record_with_key for keyed writers",
+            )),
         }
     }
 
@@ -102,6 +118,30 @@ impl WriterInner {
     ) -> Result<(), DryIceError> {
         match self {
             Self::RawRawRawB8(w) => {
+                let k = Bytes8Key(key.try_into().map_err(|_| {
+                    DryIceError::InvalidRecordKeyEncoding {
+                        message: "key must be exactly 8 bytes",
+                    }
+                })?);
+                w.write_record_with_key(record, &k)
+            },
+            Self::RawOmitOmitB8(w) => {
+                let k = Bytes8Key(key.try_into().map_err(|_| {
+                    DryIceError::InvalidRecordKeyEncoding {
+                        message: "key must be exactly 8 bytes",
+                    }
+                })?);
+                w.write_record_with_key(record, &k)
+            },
+            Self::RawSeqOnlyB8(w) => {
+                let k = Bytes8Key(key.try_into().map_err(|_| {
+                    DryIceError::InvalidRecordKeyEncoding {
+                        message: "key must be exactly 8 bytes",
+                    }
+                })?);
+                w.write_record_with_key(record, &k)
+            },
+            Self::RawNameOnlyB8(w) => {
                 let k = Bytes8Key(key.try_into().map_err(|_| {
                     DryIceError::InvalidRecordKeyEncoding {
                         message: "key must be exactly 8 bytes",
@@ -148,6 +188,13 @@ enum ReaderInner {
         RustReader<R, TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec, NoRecordKey>,
     ),
     RawRawRawB8(RustReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key>),
+    RawOmitOmitB8(
+        RustReader<R, OmittedSequenceCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>,
+    ),
+    RawSeqOnlyB8(RustReader<R, RawAsciiCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>),
+    RawNameOnlyB8(
+        RustReader<R, OmittedSequenceCodec, OmittedQualityCodec, RawNameCodec, Bytes8Key>,
+    ),
     TwoBitBinnedSplitB8(
         RustReader<R, TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec, Bytes8Key>,
     ),
@@ -173,6 +220,9 @@ impl ReaderInner {
     fn record_key(&self) -> Result<Option<Vec<u8>>, DryIceError> {
         match self {
             Self::RawRawRawB8(r) => Ok(Some(r.record_key()?.0.to_vec())),
+            Self::RawOmitOmitB8(r) => Ok(Some(r.record_key()?.0.to_vec())),
+            Self::RawSeqOnlyB8(r) => Ok(Some(r.record_key()?.0.to_vec())),
+            Self::RawNameOnlyB8(r) => Ok(Some(r.record_key()?.0.to_vec())),
             Self::TwoBitBinnedSplitB8(r) => Ok(Some(r.record_key()?.0.to_vec())),
             _ => Ok(None),
         }
@@ -487,6 +537,54 @@ impl WriterBuilder {
         slf
     }
 
+    fn prefix_kmers(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn prefix_kmers_with_sequences(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "raw".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn prefix_kmers_with_names(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "raw".to_string();
+        slf
+    }
+
+    fn minimizers(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn minimizers_with_sequences(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "raw".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn minimizers_with_names(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "raw".to_string();
+        slf
+    }
+
     fn target_block_records(mut slf: PyRefMut<'_, Self>, n: usize) -> PyRefMut<'_, Self> {
         slf.target_block_records = n;
         slf
@@ -534,6 +632,34 @@ impl WriterBuilder {
             ("raw", "raw", "raw", "bytes8") => WriterInner::RawRawRawB8(
                 RustWriter::builder()
                     .inner(Vec::new())
+                    .bytes8_key()
+                    .target_block_records(n)
+                    .build(),
+            ),
+            ("omitted", "omitted", "omitted", "bytes8") => WriterInner::RawOmitOmitB8(
+                RustWriter::builder()
+                    .inner(Vec::new())
+                    .omit_sequence()
+                    .omit_quality()
+                    .omit_names()
+                    .bytes8_key()
+                    .target_block_records(n)
+                    .build(),
+            ),
+            ("raw", "omitted", "omitted", "bytes8") => WriterInner::RawSeqOnlyB8(
+                RustWriter::builder()
+                    .inner(Vec::new())
+                    .omit_quality()
+                    .omit_names()
+                    .bytes8_key()
+                    .target_block_records(n)
+                    .build(),
+            ),
+            ("omitted", "omitted", "raw", "bytes8") => WriterInner::RawNameOnlyB8(
+                RustWriter::builder()
+                    .inner(Vec::new())
+                    .omit_sequence()
+                    .omit_quality()
                     .bytes8_key()
                     .target_block_records(n)
                     .build(),
@@ -748,6 +874,54 @@ impl ReaderBuilder {
         slf
     }
 
+    fn prefix_kmers(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn prefix_kmers_with_sequences(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "raw".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn prefix_kmers_with_names(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "raw".to_string();
+        slf
+    }
+
+    fn minimizers(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn minimizers_with_sequences(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "raw".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "omitted".to_string();
+        slf
+    }
+
+    fn minimizers_with_names(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.record_key = "bytes8".to_string();
+        slf.sequence_codec = "omitted".to_string();
+        slf.quality_codec = "omitted".to_string();
+        slf.name_codec = "raw".to_string();
+        slf
+    }
+
     fn project_name(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         push_selected_field(&mut slf.selected_fields, "name");
         slf
@@ -873,6 +1047,20 @@ fn open_projected(
         projection,
     )?;
     Ok(Reader { inner })
+}
+
+#[pyfunction]
+fn default_prefix_kmer_key(sequence: &[u8]) -> PyResult<Option<Vec<u8>>> {
+    Ok(DefaultPrefixKmer64::try_from_sequence(sequence)
+        .map_err(to_py_err)?
+        .map(|key| key.0.to_le_bytes().to_vec()))
+}
+
+#[pyfunction]
+fn default_minimizer_key(sequence: &[u8]) -> PyResult<Option<Vec<u8>>> {
+    Ok(DefaultMinimizer64::try_from_sequence(sequence)
+        .map_err(to_py_err)?
+        .map(|key| key.0.to_le_bytes().to_vec()))
 }
 
 fn parse_projection(fields: &[String], key_kind: &str) -> PyResult<Projection> {
@@ -1098,6 +1286,40 @@ fn build_reader_inner(
         (("raw", "raw", "raw", "bytes8"), Projection::All) => Ok(ReaderKind::Full(
             ReaderInner::RawRawRawB8(RustReader::with_bytes8_key(cursor).map_err(to_py_err)?),
         )),
+        (("omitted", "omitted", "omitted", "bytes8"), Projection::All) => {
+            Ok(ReaderKind::Full(ReaderInner::RawOmitOmitB8(
+                RustReader::builder()
+                    .inner(cursor)
+                    .omit_sequence()
+                    .omit_quality()
+                    .omit_names()
+                    .bytes8_key()
+                    .build()
+                    .map_err(to_py_err)?,
+            )))
+        },
+        (("raw", "omitted", "omitted", "bytes8"), Projection::All) => {
+            Ok(ReaderKind::Full(ReaderInner::RawSeqOnlyB8(
+                RustReader::builder()
+                    .inner(cursor)
+                    .omit_quality()
+                    .omit_names()
+                    .bytes8_key()
+                    .build()
+                    .map_err(to_py_err)?,
+            )))
+        },
+        (("omitted", "omitted", "raw", "bytes8"), Projection::All) => {
+            Ok(ReaderKind::Full(ReaderInner::RawNameOnlyB8(
+                RustReader::builder()
+                    .inner(cursor)
+                    .omit_sequence()
+                    .omit_quality()
+                    .bytes8_key()
+                    .build()
+                    .map_err(to_py_err)?,
+            )))
+        },
         (("raw", "raw", "raw", "bytes8"), Projection::Key) => {
             Ok(ReaderKind::Selected(SelectedReaderInner::RawRawRawB8Key(
                 RustReader::builder()
@@ -1192,5 +1414,7 @@ fn dryice_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Reader>()?;
     m.add_class::<Record>()?;
     m.add_function(wrap_pyfunction!(open_projected, m)?)?;
+    m.add_function(wrap_pyfunction!(default_prefix_kmer_key, m)?)?;
+    m.add_function(wrap_pyfunction!(default_minimizer_key, m)?)?;
     Ok(())
 }

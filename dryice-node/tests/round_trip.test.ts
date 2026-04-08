@@ -1,5 +1,11 @@
 import { test, expect, describe } from "bun:test";
-import { WriterBuilder, Reader, ReaderBuilder } from "../api.js";
+import {
+  WriterBuilder,
+  Reader,
+  ReaderBuilder,
+  defaultMinimizerKey,
+  defaultPrefixKmerKey,
+} from "../api.js";
 
 describe("Writer and Reader with default codecs", () => {
   test("round-trip two records", () => {
@@ -269,6 +275,58 @@ describe("Writer and Reader with record keys", () => {
     expect(records.length).toBe(1);
     expect(records[0].key).not.toBeNull();
     expect(Buffer.from(records[0].key!).toString()).toBe("sortkey!");
+  });
+
+  test("default prefix kmer key helper returns 8-byte key", () => {
+    const key = defaultPrefixKmerKey(Buffer.from("ACGTACGTACGTACGTACGTACGTACGTACG"));
+    expect(key).not.toBeNull();
+    expect(key!.length).toBe(8);
+  });
+
+  test("default minimizer key helper returns 8-byte key", () => {
+    const key = defaultMinimizerKey(
+      Buffer.from("ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA")
+    );
+    expect(key).not.toBeNull();
+    expect(key!.length).toBe(8);
+  });
+
+  test("minimizers preset round-trips key-only payload", () => {
+    const writer = new WriterBuilder().minimizers().build();
+    const key = defaultMinimizerKey(
+      Buffer.from("ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA")
+    );
+    expect(key).not.toBeNull();
+    writer.writeRecordWithKey(Buffer.from(""), Buffer.from(""), Buffer.from(""), key!);
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder().minimizers().build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect(record!.key).toEqual(key);
+    expect(Buffer.from(record!.name!).length).toBe(0);
+    expect(Buffer.from(record!.sequence!).length).toBe(0);
+    expect(Buffer.from(record!.quality!).length).toBe(0);
+  });
+
+  test("prefix kmers with sequences preset keeps sequence and key", () => {
+    const sequence = Buffer.from("ACGTACGTACGTACGTACGTACGTACGTACG");
+    const key = defaultPrefixKmerKey(sequence);
+    expect(key).not.toBeNull();
+
+    const writer = new WriterBuilder().prefixKmersWithSequences().build();
+    writer.writeRecordWithKey(Buffer.from(""), sequence, Buffer.from("!".repeat(sequence.length)), key!);
+    const data = writer.finish();
+
+    const reader = new ReaderBuilder().prefixKmersWithSequences().build(data);
+    const record = reader.nextRecord();
+
+    expect(record).not.toBeNull();
+    expect(record!.key).toEqual(key);
+    expect(Buffer.from(record!.sequence!).toString()).toBe(sequence.toString());
+    expect(Buffer.from(record!.name!).length).toBe(0);
+    expect(Buffer.from(record!.quality!).length).toBe(0);
   });
 });
 

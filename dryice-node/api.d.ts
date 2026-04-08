@@ -30,6 +30,12 @@ export declare class ReaderBuilder<F extends readonly Field[] | null = null> {
   binnedQuality(): ReaderBuilder<F>
   splitNames(): ReaderBuilder<F>
   bytes8Key(): ReaderBuilder<F>
+  prefixKmers(): ReaderBuilder<F>
+  prefixKmersWithSequences(): ReaderBuilder<F>
+  prefixKmersWithNames(): ReaderBuilder<F>
+  minimizers(): ReaderBuilder<F>
+  minimizersWithSequences(): ReaderBuilder<F>
+  minimizersWithNames(): ReaderBuilder<F>
   select<const G extends readonly Field[]>(...fields: G): ReaderBuilder<G>
   build(data: Buffer): Reader<F>
 }
@@ -47,6 +53,15 @@ export declare class WriterBuilder {
   binnedQuality(): this
   splitNames(): this
   bytes8Key(): this
+  prefixKmers(): this
+  prefixKmersWithSequences(): this
+  prefixKmersWithNames(): this
+  minimizers(): this
+  minimizersWithSequences(): this
+  minimizersWithNames(): this
   targetBlockRecords(n: number): this
   build(): Writer
 }
+
+export declare function defaultPrefixKmerKey(sequence: Buffer): Buffer | null
+export declare function defaultMinimizerKey(sequence: Buffer): Buffer | null

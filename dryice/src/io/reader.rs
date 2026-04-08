@@ -5,9 +5,9 @@ use std::{io::Read, marker::PhantomData};
 use crate::{
     block::{
         BlockDecoder,
-        name::{NameCodec, RawNameCodec},
-        quality::{QualityCodec, RawQualityCodec},
-        sequence::{RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
+        name::{NameCodec, OmittedNameCodec, RawNameCodec},
+        quality::{OmittedQualityCodec, QualityCodec, RawQualityCodec},
+        sequence::{OmittedSequenceCodec, RawAsciiCodec, SequenceCodec, TwoBitExactCodec},
     },
     error::DryIceError,
     fields::{AllFields, HasKey, HasName, HasQuality, HasSequence, SelectionExpr, SelectionPlan},
@@ -173,6 +173,12 @@ impl<R, Q, N, K, M> DryIceReaderBuilder<R, RawAsciiCodec, Q, N, K, M> {
     pub fn two_bit_exact(self) -> DryIceReaderBuilder<R, TwoBitExactCodec, Q, N, K, M> {
         self.sequence_codec::<TwoBitExactCodec>()
     }
+
+    /// Configure the reader to expect omitted sequence payloads.
+    #[must_use]
+    pub fn omit_sequence(self) -> DryIceReaderBuilder<R, OmittedSequenceCodec, Q, N, K, M> {
+        self.sequence_codec::<OmittedSequenceCodec>()
+    }
 }
 
 impl<R, S, N, K, M> DryIceReaderBuilder<R, S, RawQualityCodec, N, K, M> {
@@ -188,6 +194,12 @@ impl<R, S, N, K, M> DryIceReaderBuilder<R, S, RawQualityCodec, N, K, M> {
             _mode: PhantomData,
         }
     }
+
+    /// Configure the reader to expect omitted quality payloads.
+    #[must_use]
+    pub fn omit_quality(self) -> DryIceReaderBuilder<R, S, OmittedQualityCodec, N, K, M> {
+        self.quality_codec::<OmittedQualityCodec>()
+    }
 }
 
 impl<R, S, Q, K, M> DryIceReaderBuilder<R, S, Q, RawNameCodec, K, M> {
@@ -202,6 +214,12 @@ impl<R, S, Q, K, M> DryIceReaderBuilder<R, S, Q, RawNameCodec, K, M> {
             _key: PhantomData,
             _mode: PhantomData,
         }
+    }
+
+    /// Configure the reader to expect omitted name payloads.
+    #[must_use]
+    pub fn omit_names(self) -> DryIceReaderBuilder<R, S, Q, OmittedNameCodec, K, M> {
+        self.name_codec::<OmittedNameCodec>()
     }
 }
 

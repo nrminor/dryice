@@ -167,6 +167,76 @@ def test_select_rejects_unknown_field():
         pass
 
 
+def test_default_prefix_kmer_key_helper():
+    key = di.default_prefix_kmer_key(b"ACGTACGTACGTACGTACGTACGTACGTACG")
+    assert key is not None
+    assert len(key) == 8
+
+
+def test_default_minimizer_key_helper():
+    key = di.default_minimizer_key(
+        b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA"
+    )
+    assert key is not None
+    assert len(key) == 8
+
+
+def test_minimizers_builder_preset_round_trips_key_only():
+    writer = di.WriterBuilder().minimizers().build()
+    key = di.default_minimizer_key(
+        b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA"
+    )
+    assert key is not None
+    writer.write_record_with_key(b"", b"", b"", key)
+    data = writer.finish()
+
+    reader = di.ReaderBuilder().minimizers().build(data)
+    records = list(reader)
+
+    assert len(records) == 1
+    assert records[0].key == key
+    assert records[0].name == b""
+    assert records[0].sequence == b""
+    assert records[0].quality == b""
+
+
+def test_minimizers_with_names_preset_round_trips_name_and_key():
+    writer = di.WriterBuilder().minimizers_with_names().build()
+    key = di.default_minimizer_key(
+        b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA"
+    )
+    assert key is not None
+    writer.write_record_with_key(b"read1", b"", b"", key)
+    data = writer.finish()
+
+    reader = di.ReaderBuilder().minimizers_with_names().build(data)
+    records = list(reader)
+
+    assert len(records) == 1
+    assert records[0].name == b"read1"
+    assert records[0].key == key
+    assert records[0].sequence == b""
+    assert records[0].quality == b""
+
+
+def test_prefix_kmers_with_sequences_preset_round_trips_sequence_and_key():
+    writer = di.WriterBuilder().prefix_kmers_with_sequences().build()
+    sequence = b"ACGTACGTACGTACGTACGTACGTACGTACG"
+    key = di.default_prefix_kmer_key(sequence)
+    assert key is not None
+    writer.write_record_with_key(b"", sequence, b"!" * len(sequence), key)
+    data = writer.finish()
+
+    reader = di.ReaderBuilder().prefix_kmers_with_sequences().build(data)
+    records = list(reader)
+
+    assert len(records) == 1
+    assert records[0].key == key
+    assert records[0].sequence == sequence
+    assert records[0].name == b""
+    assert records[0].quality == b""
+
+
 def test_empty_file():
     """Write and read an empty file."""
     writer = di.Writer.builder().build()

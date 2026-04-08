@@ -4,7 +4,8 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use dryice::{
-    BinnedQualityCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec,
+    BinnedQualityCodec, DefaultMinimizer64, DefaultPrefixKmer64, OmittedNameCodec,
+    OmittedQualityCodec, OmittedSequenceCodec, RawAsciiCodec, RawNameCodec, RawQualityCodec,
     SelectedDryIceReader as RustSelectedReader, SplitNameCodec, TwoBitExactCodec,
     TwoBitLossyNCodec,
     fields::{Key as SelectKey, Name as SelectName, Quality as SelectQuality},
@@ -48,6 +49,9 @@ macro_rules! dispatch_all_writers {
             WriterInner::TwoBitBinnedSplit(w) => w.$method($($arg),*).map_err(to_napi_err),
             WriterInner::LossyBinnedSplit(w) => w.$method($($arg),*).map_err(to_napi_err),
             WriterInner::RawRawRawB8(w) => w.$method($($arg),*).map_err(to_napi_err),
+            WriterInner::RawOmitOmitB8(w) => w.$method($($arg),*).map_err(to_napi_err),
+            WriterInner::RawSeqOnlyB8(w) => w.$method($($arg),*).map_err(to_napi_err),
+            WriterInner::RawNameOnlyB8(w) => w.$method($($arg),*).map_err(to_napi_err),
             WriterInner::TwoBitBinnedSplitB8(w) => w.$method($($arg),*).map_err(to_napi_err),
         }
     };
@@ -61,6 +65,9 @@ macro_rules! dispatch_all_readers {
             ReaderInner::TwoBitBinnedSplit(r) => r.$method($($arg),*),
             ReaderInner::LossyBinnedSplit(r) => r.$method($($arg),*),
             ReaderInner::RawRawRawB8(r) => r.$method($($arg),*),
+            ReaderInner::RawOmitOmitB8(r) => r.$method($($arg),*),
+            ReaderInner::RawSeqOnlyB8(r) => r.$method($($arg),*),
+            ReaderInner::RawNameOnlyB8(r) => r.$method($($arg),*),
             ReaderInner::TwoBitBinnedSplitB8(r) => r.$method($($arg),*),
         }
     };
@@ -76,6 +83,13 @@ enum WriterInner {
         RustWriter<W, TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec, NoRecordKey>,
     ),
     RawRawRawB8(RustWriter<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key>),
+    RawOmitOmitB8(
+        RustWriter<W, OmittedSequenceCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>,
+    ),
+    RawSeqOnlyB8(RustWriter<W, RawAsciiCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>),
+    RawNameOnlyB8(
+        RustWriter<W, OmittedSequenceCodec, OmittedQualityCodec, RawNameCodec, Bytes8Key>,
+    ),
     TwoBitBinnedSplitB8(
         RustWriter<W, TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec, Bytes8Key>,
     ),
@@ -88,7 +102,11 @@ impl WriterInner {
             Self::TwoBitRawRaw(w) => w.write_record(record).map_err(to_napi_err),
             Self::TwoBitBinnedSplit(w) => w.write_record(record).map_err(to_napi_err),
             Self::LossyBinnedSplit(w) => w.write_record(record).map_err(to_napi_err),
-            Self::RawRawRawB8(_) | Self::TwoBitBinnedSplitB8(_) => Err(napi::Error::from_reason(
+            Self::RawRawRawB8(_)
+            | Self::RawOmitOmitB8(_)
+            | Self::RawSeqOnlyB8(_)
+            | Self::RawNameOnlyB8(_)
+            | Self::TwoBitBinnedSplitB8(_) => Err(napi::Error::from_reason(
                 "use writeRecordWithKey for keyed writers",
             )),
         }
@@ -97,6 +115,27 @@ impl WriterInner {
     fn write_record_with_key(&mut self, record: &SliceRecord<'_>, key: &[u8]) -> Result<()> {
         match self {
             Self::RawRawRawB8(w) => {
+                let k = Bytes8Key(
+                    key.try_into()
+                        .map_err(|_| napi::Error::from_reason("key must be exactly 8 bytes"))?,
+                );
+                w.write_record_with_key(record, &k).map_err(to_napi_err)
+            },
+            Self::RawOmitOmitB8(w) => {
+                let k = Bytes8Key(
+                    key.try_into()
+                        .map_err(|_| napi::Error::from_reason("key must be exactly 8 bytes"))?,
+                );
+                w.write_record_with_key(record, &k).map_err(to_napi_err)
+            },
+            Self::RawSeqOnlyB8(w) => {
+                let k = Bytes8Key(
+                    key.try_into()
+                        .map_err(|_| napi::Error::from_reason("key must be exactly 8 bytes"))?,
+                );
+                w.write_record_with_key(record, &k).map_err(to_napi_err)
+            },
+            Self::RawNameOnlyB8(w) => {
                 let k = Bytes8Key(
                     key.try_into()
                         .map_err(|_| napi::Error::from_reason("key must be exactly 8 bytes"))?,
@@ -131,6 +170,13 @@ enum ReaderInner {
         RustReader<R, TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec, NoRecordKey>,
     ),
     RawRawRawB8(RustReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, Bytes8Key>),
+    RawOmitOmitB8(
+        RustReader<R, OmittedSequenceCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>,
+    ),
+    RawSeqOnlyB8(RustReader<R, RawAsciiCodec, OmittedQualityCodec, OmittedNameCodec, Bytes8Key>),
+    RawNameOnlyB8(
+        RustReader<R, OmittedSequenceCodec, OmittedQualityCodec, RawNameCodec, Bytes8Key>,
+    ),
     TwoBitBinnedSplitB8(
         RustReader<R, TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec, Bytes8Key>,
     ),
@@ -159,6 +205,18 @@ impl ReaderInner {
                 let k = r.record_key().map_err(to_napi_err)?;
                 Ok(Some(k.0.to_vec()))
             },
+            Self::RawOmitOmitB8(r) => {
+                let k = r.record_key().map_err(to_napi_err)?;
+                Ok(Some(k.0.to_vec()))
+            },
+            Self::RawSeqOnlyB8(r) => {
+                let k = r.record_key().map_err(to_napi_err)?;
+                Ok(Some(k.0.to_vec()))
+            },
+            Self::RawNameOnlyB8(r) => {
+                let k = r.record_key().map_err(to_napi_err)?;
+                Ok(Some(k.0.to_vec()))
+            },
             Self::TwoBitBinnedSplitB8(r) => {
                 let k = r.record_key().map_err(to_napi_err)?;
                 Ok(Some(k.0.to_vec()))
@@ -181,6 +239,7 @@ enum Projection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SequenceCodecKind {
     Raw,
+    Omitted,
     TwoBitExact,
     TwoBitLossyN,
 }
@@ -188,12 +247,14 @@ enum SequenceCodecKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QualityCodecKind {
     Raw,
+    Omitted,
     Binned,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NameCodecKind {
     Raw,
+    Omitted,
     Split,
 }
 
@@ -210,6 +271,9 @@ enum CodecProfile {
     TwoBitExactBinnedSplit,
     TwoBitLossyBinnedSplit,
     RawBytes8,
+    RawOmitOmitBytes8,
+    RawSeqOnlyBytes8,
+    RawNameOnlyBytes8,
     TwoBitExactBinnedSplitBytes8,
 }
 
@@ -222,6 +286,7 @@ struct ReaderRequest {
 fn parse_sequence_codec(value: &str) -> Result<SequenceCodecKind> {
     match value {
         "raw" => Ok(SequenceCodecKind::Raw),
+        "omitted" => Ok(SequenceCodecKind::Omitted),
         "two_bit_exact" => Ok(SequenceCodecKind::TwoBitExact),
         "two_bit_lossy_n" => Ok(SequenceCodecKind::TwoBitLossyN),
         _ => Err(napi::Error::from_reason(format!(
@@ -233,6 +298,7 @@ fn parse_sequence_codec(value: &str) -> Result<SequenceCodecKind> {
 fn parse_quality_codec(value: &str) -> Result<QualityCodecKind> {
     match value {
         "raw" => Ok(QualityCodecKind::Raw),
+        "omitted" => Ok(QualityCodecKind::Omitted),
         "binned" => Ok(QualityCodecKind::Binned),
         _ => Err(napi::Error::from_reason(format!(
             "unknown quality codec: {value}",
@@ -243,6 +309,7 @@ fn parse_quality_codec(value: &str) -> Result<QualityCodecKind> {
 fn parse_name_codec(value: &str) -> Result<NameCodecKind> {
     match value {
         "raw" => Ok(NameCodecKind::Raw),
+        "omitted" => Ok(NameCodecKind::Omitted),
         "split" => Ok(NameCodecKind::Split),
         _ => Err(napi::Error::from_reason(format!(
             "unknown name codec: {value}",
@@ -291,6 +358,24 @@ fn normalize_profile(
         (SequenceCodecKind::Raw, QualityCodecKind::Raw, NameCodecKind::Raw, KeyKind::Bytes8) => {
             Ok(CodecProfile::RawBytes8)
         },
+        (
+            SequenceCodecKind::Omitted,
+            QualityCodecKind::Omitted,
+            NameCodecKind::Omitted,
+            KeyKind::Bytes8,
+        ) => Ok(CodecProfile::RawOmitOmitBytes8),
+        (
+            SequenceCodecKind::Raw,
+            QualityCodecKind::Omitted,
+            NameCodecKind::Omitted,
+            KeyKind::Bytes8,
+        ) => Ok(CodecProfile::RawSeqOnlyBytes8),
+        (
+            SequenceCodecKind::Omitted,
+            QualityCodecKind::Omitted,
+            NameCodecKind::Raw,
+            KeyKind::Bytes8,
+        ) => Ok(CodecProfile::RawNameOnlyBytes8),
         (
             SequenceCodecKind::TwoBitExact,
             QualityCodecKind::Binned,
@@ -704,6 +789,34 @@ fn build_writer(
                 .target_block_records(n)
                 .build(),
         )),
+        ("omitted", "omitted", "omitted", "bytes8") => Ok(WriterInner::RawOmitOmitB8(
+            RustWriter::builder()
+                .inner(Vec::new())
+                .omit_sequence()
+                .omit_quality()
+                .omit_names()
+                .bytes8_key()
+                .target_block_records(n)
+                .build(),
+        )),
+        ("raw", "omitted", "omitted", "bytes8") => Ok(WriterInner::RawSeqOnlyB8(
+            RustWriter::builder()
+                .inner(Vec::new())
+                .omit_quality()
+                .omit_names()
+                .bytes8_key()
+                .target_block_records(n)
+                .build(),
+        )),
+        ("omitted", "omitted", "raw", "bytes8") => Ok(WriterInner::RawNameOnlyB8(
+            RustWriter::builder()
+                .inner(Vec::new())
+                .omit_sequence()
+                .omit_quality()
+                .bytes8_key()
+                .target_block_records(n)
+                .build(),
+        )),
         ("two_bit_exact", "binned", "split", "bytes8") => Ok(WriterInner::TwoBitBinnedSplitB8(
             RustWriter::builder()
                 .inner(Vec::new())
@@ -741,6 +854,34 @@ fn build_full_reader(data: Vec<u8>, profile: CodecProfile) -> Result<ReaderInner
         )),
         CodecProfile::RawBytes8 => Ok(ReaderInner::RawRawRawB8(
             RustReader::with_bytes8_key(cursor).map_err(to_napi_err)?,
+        )),
+        CodecProfile::RawOmitOmitBytes8 => Ok(ReaderInner::RawOmitOmitB8(
+            RustReader::builder()
+                .inner(cursor)
+                .omit_sequence()
+                .omit_quality()
+                .omit_names()
+                .bytes8_key()
+                .build()
+                .map_err(to_napi_err)?,
+        )),
+        CodecProfile::RawSeqOnlyBytes8 => Ok(ReaderInner::RawSeqOnlyB8(
+            RustReader::builder()
+                .inner(cursor)
+                .omit_quality()
+                .omit_names()
+                .bytes8_key()
+                .build()
+                .map_err(to_napi_err)?,
+        )),
+        CodecProfile::RawNameOnlyBytes8 => Ok(ReaderInner::RawNameOnlyB8(
+            RustReader::builder()
+                .inner(cursor)
+                .omit_sequence()
+                .omit_quality()
+                .bytes8_key()
+                .build()
+                .map_err(to_napi_err)?,
         )),
         CodecProfile::TwoBitExactBinnedSplitBytes8 => Ok(ReaderInner::TwoBitBinnedSplitB8(
             RustReader::builder()
@@ -1050,6 +1191,60 @@ impl WriterBuilder {
     }
 
     #[napi]
+    pub fn prefix_kmers(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn prefix_kmers_with_sequences(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "raw".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn prefix_kmers_with_names(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "raw".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn minimizers(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn minimizers_with_sequences(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "raw".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn minimizers_with_names(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "raw".to_string();
+        self
+    }
+
+    #[napi]
     pub fn target_block_records(&mut self, n: u32) -> &Self {
         self.target_block_records = n;
         self
@@ -1177,6 +1372,60 @@ impl ReaderBuilder {
     }
 
     #[napi]
+    pub fn prefix_kmers(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn prefix_kmers_with_sequences(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "raw".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn prefix_kmers_with_names(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "raw".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn minimizers(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn minimizers_with_sequences(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "raw".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "omitted".to_string();
+        self
+    }
+
+    #[napi]
+    pub fn minimizers_with_names(&mut self) -> &Self {
+        self.record_key = "bytes8".to_string();
+        self.sequence_codec = "omitted".to_string();
+        self.quality_codec = "omitted".to_string();
+        self.name_codec = "raw".to_string();
+        self
+    }
+
+    #[napi]
     pub fn select(&mut self, fields: Vec<String>) -> Result<&Self> {
         validate_selected_fields(&fields)?;
         self.selected_fields = fields;
@@ -1246,4 +1495,18 @@ impl Reader {
         }
         Ok(records)
     }
+}
+
+#[napi]
+pub fn default_prefix_kmer_key(sequence: Buffer) -> Result<Option<Buffer>> {
+    Ok(DefaultPrefixKmer64::try_from_sequence(&sequence)
+        .map_err(to_napi_err)?
+        .map(|key| Buffer::from(key.0.to_le_bytes().to_vec())))
+}
+
+#[napi]
+pub fn default_minimizer_key(sequence: Buffer) -> Result<Option<Buffer>> {
+    Ok(DefaultMinimizer64::try_from_sequence(&sequence)
+        .map_err(to_napi_err)?
+        .map(|key| Buffer::from(key.0.to_le_bytes().to_vec())))
 }
