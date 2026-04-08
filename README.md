@@ -2,9 +2,6 @@
 
 > _Don't put it in the minus-80—just put it on dry ice!_
 
-> [!WARNING]  
-> Though this repo is public, it's a work in progress and not ready for use yet!
-
 ## Overview
 
 DryIce is a disk storage engine and file format optimized for temporary genomic data. Its purpose is to leverage extremely fast movement of sequence data on and off of disk to make larger-than-memory workloads more tractable. Want to do parallel comparisons between kmers across cores? Want to do disk-spilling global sequence sorting? Want to cheaply scan for sequence matches across partitioned reads? DryIce is meant for these and more use cases.
