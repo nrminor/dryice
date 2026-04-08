@@ -60,6 +60,9 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      - name: Use portable cargo config for wrapper build
+        run: cp .cargo/config-portable.toml .cargo/config.toml
+
       - name: Build and test Python wrapper
         run: just python-test
 
@@ -84,6 +87,9 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@v2
+
+      - name: Use portable cargo config for wrapper build
+        run: cp .cargo/config-portable.toml .cargo/config.toml
 
       - name: Install Node dependencies
         run: cd dryice-node && bun install

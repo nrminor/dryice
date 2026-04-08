@@ -14,6 +14,7 @@
 !/cliff.toml
 !/.cargo
 !/.cargo/config.toml
+!/.cargo/config-portable.toml
 
 # === Allowed: core crate ===
 !/dryice
