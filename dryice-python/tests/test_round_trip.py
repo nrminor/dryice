@@ -1,5 +1,7 @@
 """Round-trip tests for the dryice Python bindings."""
 
+import os
+
 import dryice_python as di
 
 
@@ -52,6 +54,7 @@ def test_write_and_read_compact():
 
     assert len(records) == 1
     assert records[0].sequence == b"ACGTACGT"
+    assert records[0].quality is not None
     assert len(records[0].quality) == 8
 
 
@@ -278,6 +281,71 @@ def test_record_repr():
 
     assert "my_read" in repr(record)
     assert "4" in repr(record)
+
+
+def test_temp_file_context_manager_round_trips_and_cleans_up():
+    """TempFile supports file-backed writer/reader workflows and cleanup."""
+    with di.temp_file() as tmp:
+        path = tmp.path
+        assert os.path.exists(path)
+
+        writer = di.WriterBuilder().build_temp(tmp)
+        writer.write_record(b"read1", b"ACGT", b"!!!!")
+        writer.write_record(b"read2", b"TGCA", b"####")
+        assert writer.finish() is None
+
+        reader = di.ReaderBuilder().build_temp(tmp)
+        records = list(reader)
+
+        assert len(records) == 2
+        assert records[0].name == b"read1"
+        assert records[1].sequence == b"TGCA"
+
+    assert not os.path.exists(path)
+
+
+def test_temp_file_supports_codec_and_key_presets():
+    """TempFile composes with the same builder presets as buffer writers."""
+    sequence = b"ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA"
+    key = di.default_minimizer_key(sequence)
+    assert key is not None
+
+    with di.temp_file() as tmp:
+        writer = di.WriterBuilder().minimizers_with_names().build_temp(tmp)
+        writer.write_record_with_key(b"read1", b"", b"", key)
+        writer.finish()
+
+        reader = di.ReaderBuilder().minimizers_with_names().build_temp(tmp)
+        records = list(reader)
+
+    assert len(records) == 1
+    assert records[0].name == b"read1"
+    assert records[0].key == key
+    assert records[0].sequence == b""
+    assert records[0].quality == b""
+
+
+def test_temp_file_persist_keeps_file(tmp_path):
+    """persist transfers ownership to the caller."""
+    destination = tmp_path / "kept.dryice"
+
+    with di.temp_file() as tmp:
+        writer = di.WriterBuilder().build_temp(tmp)
+        writer.write_record(b"read1", b"ACGT", b"!!!!")
+        writer.finish()
+
+        persisted = tmp.persist(str(destination))
+
+    assert persisted == str(destination)
+    assert destination.exists()
+
+    with open(destination, "rb") as file:
+        data = file.read()
+
+    reader = di.Reader.open(data)
+    records = list(reader)
+    assert len(records) == 1
+    assert records[0].name == b"read1"
 
 
 def test_writer_rejects_after_finish():

@@ -33,6 +33,23 @@ for record in reader:
     print(record.name, record.sequence)
 ```
 
+### Temporary files
+
+For filesystem-backed intermediate data, use `temp_file()` as a context manager. The temporary file is cleaned up when the context exits; cleanup failures are emitted as Python warnings rather than being written directly to stderr by the library.
+
+```python
+with di.temp_file() as tmp:
+    writer = di.WriterBuilder().build_temp(tmp)
+    writer.write_record(b"read1", b"ACGTACGT", b"!!!!!!!!")
+    writer.finish()
+
+    reader = di.ReaderBuilder().build_temp(tmp)
+    for record in reader:
+        print(record.name, record.sequence)
+```
+
+Use `tmp.persist(path)` inside the context if an intermediate file should become caller-owned instead of evaporating.
+
 ### Selective decoding
 
 ```python
@@ -86,9 +103,11 @@ See [examples/biopython_integration.py](examples/biopython_integration.py) for a
 The package ships with type stubs (`dryice_python.pyi`) for full IDE support. The main classes are:
 
 - `Writer` / `WriterBuilder` — write records with configurable codecs and keys
+- `TempFile` / `TempWriter` — context-managed, file-backed temporary storage for intermediate data
 - `Reader` / `ReaderBuilder` — iterate over records with codec verification
 - `open_projected(...)` — open a reader with selective decoding for a supported projection
 - `Record` — a decoded record with `name`, `sequence`, `quality`, and optional `key` fields; unselected fields are `None` in projected reads
+- `temp_file()` — create an owned temporary dryice file suitable for `with` blocks
 
 ## About dryice
 

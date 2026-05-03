@@ -1,5 +1,10 @@
 //! Python bindings for the `dryice` high-throughput genomic record container.
 
+use std::{
+    fs::File,
+    io::{Cursor, Read, Seek, SeekFrom, Write},
+};
+
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
@@ -7,7 +12,7 @@ use dryice::{
     BinnedQualityCodec, Bytes8Key, DefaultMinimizer64, DefaultPrefixKmer64, DryIceError,
     DryIceReader as RustReader, DryIceWriter as RustWriter, NoRecordKey, OmittedNameCodec,
     OmittedQualityCodec, OmittedSequenceCodec, SelectedDryIceReader as RustSelectedReader,
-    SeqRecordLike, SplitNameCodec, TwoBitExactCodec, TwoBitLossyNCodec,
+    SeqRecordLike, SplitNameCodec, TempDryIceFile, TwoBitExactCodec, TwoBitLossyNCodec,
     fields::{Key as SelectKey, Name as SelectName, Quality as SelectQuality},
     fields::{Sequence as SelectSequence, SequenceKey as SelectSequenceKey},
 };
@@ -37,8 +42,7 @@ impl SeqRecordLike for SliceRecord<'_> {
     }
 }
 
-type W = Vec<u8>;
-type R = std::io::Cursor<Vec<u8>>;
+type BufferReader = Cursor<Vec<u8>>;
 
 macro_rules! dispatch_all_writers {
     ($self:expr, $method:ident ( $($arg:expr),* )) => {
@@ -72,7 +76,7 @@ macro_rules! dispatch_all_readers {
     };
 }
 
-enum WriterInner {
+enum WriterInner<W> {
     RawRawRaw(RustWriter<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitRawRaw(RustWriter<W, TwoBitExactCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitBinnedSplit(
@@ -94,7 +98,7 @@ enum WriterInner {
     ),
 }
 
-impl WriterInner {
+impl<W: Write> WriterInner<W> {
     fn write_record(&mut self, record: &SliceRecord<'_>) -> Result<(), DryIceError> {
         match self {
             Self::RawRawRaw(w) => w.write_record(record),
@@ -163,7 +167,7 @@ impl WriterInner {
         }
     }
 
-    fn finish(self) -> Result<Vec<u8>, DryIceError> {
+    fn finish(self) -> Result<W, DryIceError> {
         dispatch_all_writers!(self, finish())
     }
 }
@@ -178,7 +182,7 @@ enum Projection {
     SequenceKey,
 }
 
-enum ReaderInner {
+enum ReaderInner<R> {
     RawRawRaw(RustReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitRawRaw(RustReader<R, TwoBitExactCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitBinnedSplit(
@@ -200,7 +204,7 @@ enum ReaderInner {
     ),
 }
 
-impl ReaderInner {
+impl<R: Read> ReaderInner<R> {
     fn next_record(&mut self) -> Result<bool, DryIceError> {
         dispatch_all_readers!(self, next_record())
     }
@@ -229,7 +233,7 @@ impl ReaderInner {
     }
 }
 
-enum SelectedReaderInner {
+enum SelectedReaderInner<R> {
     RawRawRawName(
         RustSelectedReader<
             R,
@@ -393,10 +397,11 @@ enum ProjectedRecordData {
     SequenceKey { sequence: Vec<u8>, key: Vec<u8> },
 }
 
-fn next_name_record<S, Q, N, K>(
+fn next_name_record<R, S, Q, N, K>(
     reader: &mut RustSelectedReader<R, S, Q, N, K, SelectName>,
 ) -> Result<Option<ProjectedRecordData>, DryIceError>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -406,10 +411,11 @@ where
         .map(|record| ProjectedRecordData::Name(record.name().to_vec())))
 }
 
-fn next_sequence_record<S, Q, N, K>(
+fn next_sequence_record<R, S, Q, N, K>(
     reader: &mut RustSelectedReader<R, S, Q, N, K, SelectSequence>,
 ) -> Result<Option<ProjectedRecordData>, DryIceError>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -419,10 +425,11 @@ where
         .map(|record| ProjectedRecordData::Sequence(record.sequence().to_vec())))
 }
 
-fn next_quality_record<S, Q, N, K>(
+fn next_quality_record<R, S, Q, N, K>(
     reader: &mut RustSelectedReader<R, S, Q, N, K, SelectQuality>,
 ) -> Result<Option<ProjectedRecordData>, DryIceError>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -432,10 +439,11 @@ where
         .map(|record| ProjectedRecordData::Quality(record.quality().to_vec())))
 }
 
-fn next_key_record<S, Q, N>(
+fn next_key_record<R, S, Q, N>(
     reader: &mut RustSelectedReader<R, S, Q, N, Bytes8Key, SelectKey>,
 ) -> Result<Option<ProjectedRecordData>, DryIceError>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -449,10 +457,11 @@ where
     }
 }
 
-fn next_sequence_key_record<S, Q, N>(
+fn next_sequence_key_record<R, S, Q, N>(
     reader: &mut RustSelectedReader<R, S, Q, N, Bytes8Key, SelectSequenceKey>,
 ) -> Result<Option<ProjectedRecordData>, DryIceError>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -467,7 +476,7 @@ where
     }
 }
 
-impl SelectedReaderInner {
+impl<R: Read> SelectedReaderInner<R> {
     fn next_projected_record(&mut self) -> Result<Option<ProjectedRecordData>, DryIceError> {
         match self {
             Self::RawRawRawName(r) => next_name_record(r),
@@ -488,6 +497,101 @@ impl SelectedReaderInner {
             Self::TwoBitBinnedSplitB8SequenceKey(r) => next_sequence_key_record(r),
         }
     }
+}
+
+fn build_writer_inner<W: Write>(
+    inner: W,
+    sequence_codec: &str,
+    quality_codec: &str,
+    name_codec: &str,
+    record_key: &str,
+    target_block_records: usize,
+) -> PyResult<WriterInner<W>> {
+    let writer = match (sequence_codec, quality_codec, name_codec, record_key) {
+        ("raw", "raw", "raw", "none") => WriterInner::RawRawRaw(
+            RustWriter::builder()
+                .inner(inner)
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("two_bit_exact", "raw", "raw", "none") => WriterInner::TwoBitRawRaw(
+            RustWriter::builder()
+                .inner(inner)
+                .two_bit_exact()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("two_bit_exact", "binned", "split", "none") => WriterInner::TwoBitBinnedSplit(
+            RustWriter::builder()
+                .inner(inner)
+                .two_bit_exact()
+                .binned_quality()
+                .split_names()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("two_bit_lossy_n", "binned", "split", "none") => WriterInner::LossyBinnedSplit(
+            RustWriter::builder()
+                .inner(inner)
+                .sequence_codec::<TwoBitLossyNCodec>()
+                .binned_quality()
+                .split_names()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("raw", "raw", "raw", "bytes8") => WriterInner::RawRawRawB8(
+            RustWriter::builder()
+                .inner(inner)
+                .bytes8_key()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("omitted", "omitted", "omitted", "bytes8") => WriterInner::RawOmitOmitB8(
+            RustWriter::builder()
+                .inner(inner)
+                .omit_sequence()
+                .omit_quality()
+                .omit_names()
+                .bytes8_key()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("raw", "omitted", "omitted", "bytes8") => WriterInner::RawSeqOnlyB8(
+            RustWriter::builder()
+                .inner(inner)
+                .omit_quality()
+                .omit_names()
+                .bytes8_key()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("omitted", "omitted", "raw", "bytes8") => WriterInner::RawNameOnlyB8(
+            RustWriter::builder()
+                .inner(inner)
+                .omit_sequence()
+                .omit_quality()
+                .bytes8_key()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        ("two_bit_exact", "binned", "split", "bytes8") => WriterInner::TwoBitBinnedSplitB8(
+            RustWriter::builder()
+                .inner(inner)
+                .two_bit_exact()
+                .binned_quality()
+                .split_names()
+                .bytes8_key()
+                .target_block_records(target_block_records)
+                .build(),
+        ),
+        _ => {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "unsupported codec combination: seq={sequence_codec}, qual={quality_codec}, name={name_codec}, key={record_key}",
+            )));
+        },
+    };
+
+    Ok(writer)
 }
 
 #[pyclass]
@@ -591,104 +695,42 @@ impl WriterBuilder {
     }
 
     fn build(&self) -> PyResult<Writer> {
-        let n = self.target_block_records;
-        let inner = match (
+        let inner = build_writer_inner(
+            Vec::new(),
             self.sequence_codec.as_str(),
             self.quality_codec.as_str(),
             self.name_codec.as_str(),
             self.record_key.as_str(),
-        ) {
-            ("raw", "raw", "raw", "none") => WriterInner::RawRawRaw(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("two_bit_exact", "raw", "raw", "none") => WriterInner::TwoBitRawRaw(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .two_bit_exact()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("two_bit_exact", "binned", "split", "none") => WriterInner::TwoBitBinnedSplit(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .two_bit_exact()
-                    .binned_quality()
-                    .split_names()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("two_bit_lossy_n", "binned", "split", "none") => WriterInner::LossyBinnedSplit(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .sequence_codec::<TwoBitLossyNCodec>()
-                    .binned_quality()
-                    .split_names()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("raw", "raw", "raw", "bytes8") => WriterInner::RawRawRawB8(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .bytes8_key()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("omitted", "omitted", "omitted", "bytes8") => WriterInner::RawOmitOmitB8(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .omit_sequence()
-                    .omit_quality()
-                    .omit_names()
-                    .bytes8_key()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("raw", "omitted", "omitted", "bytes8") => WriterInner::RawSeqOnlyB8(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .omit_quality()
-                    .omit_names()
-                    .bytes8_key()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("omitted", "omitted", "raw", "bytes8") => WriterInner::RawNameOnlyB8(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .omit_sequence()
-                    .omit_quality()
-                    .bytes8_key()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            ("two_bit_exact", "binned", "split", "bytes8") => WriterInner::TwoBitBinnedSplitB8(
-                RustWriter::builder()
-                    .inner(Vec::new())
-                    .two_bit_exact()
-                    .binned_quality()
-                    .split_names()
-                    .bytes8_key()
-                    .target_block_records(n)
-                    .build(),
-            ),
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "unsupported codec combination: seq={}, qual={}, name={}, key={}",
-                    self.sequence_codec, self.quality_codec, self.name_codec, self.record_key,
-                )));
-            },
-        };
+            self.target_block_records,
+        )?;
 
         Ok(Writer { inner: Some(inner) })
+    }
+
+    fn build_temp(&self, temp_file: &TempFile) -> PyResult<TempWriter> {
+        let mut file = temp_file.open_file()?;
+        file.set_len(0)
+            .map_err(DryIceError::from)
+            .map_err(to_py_err)?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(DryIceError::from)
+            .map_err(to_py_err)?;
+        let inner = build_writer_inner(
+            file,
+            self.sequence_codec.as_str(),
+            self.quality_codec.as_str(),
+            self.name_codec.as_str(),
+            self.record_key.as_str(),
+            self.target_block_records,
+        )?;
+
+        Ok(TempWriter { inner: Some(inner) })
     }
 }
 
 #[pyclass]
 struct Writer {
-    inner: Option<WriterInner>,
+    inner: Option<WriterInner<Vec<u8>>>,
 }
 
 #[pymethods]
@@ -741,6 +783,61 @@ impl Writer {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("writer already finished")
             })?
             .finish()
+            .map_err(to_py_err)
+    }
+}
+
+#[pyclass]
+struct TempWriter {
+    inner: Option<WriterInner<File>>,
+}
+
+#[pymethods]
+impl TempWriter {
+    fn write_record(&mut self, name: &[u8], sequence: &[u8], quality: &[u8]) -> PyResult<()> {
+        let record = SliceRecord {
+            name,
+            sequence,
+            quality,
+        };
+        self.inner
+            .as_mut()
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("writer already finished")
+            })?
+            .write_record(&record)
+            .map_err(to_py_err)
+    }
+
+    fn write_record_with_key(
+        &mut self,
+        name: &[u8],
+        sequence: &[u8],
+        quality: &[u8],
+        key: &[u8],
+    ) -> PyResult<()> {
+        let record = SliceRecord {
+            name,
+            sequence,
+            quality,
+        };
+        self.inner
+            .as_mut()
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("writer already finished")
+            })?
+            .write_record_with_key(&record, key)
+            .map_err(to_py_err)
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        self.inner
+            .take()
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("writer already finished")
+            })?
+            .finish()
+            .map(|_| ())
             .map_err(to_py_err)
     }
 }
@@ -811,6 +908,86 @@ impl Record {
             quality: None,
             key: Some(key),
         }
+    }
+}
+
+#[pyclass]
+struct TempFile {
+    inner: Option<TempDryIceFile>,
+}
+
+impl TempFile {
+    fn temp_file(&self) -> PyResult<&TempDryIceFile> {
+        self.inner.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("temporary file already cleaned up")
+        })
+    }
+
+    fn open_file(&self) -> PyResult<File> {
+        self.temp_file()?.open().map_err(to_py_err)
+    }
+
+    fn warn_cleanup_failure(py: Python<'_>, error: DryIceError) -> PyResult<()> {
+        let warnings = py.import("warnings")?;
+        warnings.call_method1(
+            "warn",
+            (format!("failed to clean up temporary dryice file: {error}"),),
+        )?;
+        Ok(())
+    }
+}
+
+#[pymethods]
+impl TempFile {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Ok(Self {
+            inner: Some(TempDryIceFile::new().map_err(to_py_err)?),
+        })
+    }
+
+    #[getter]
+    fn path(&self) -> PyResult<String> {
+        Ok(self.temp_file()?.path().to_string_lossy().into_owned())
+    }
+
+    fn cleanup(&mut self) -> PyResult<()> {
+        if let Some(temp_file) = self.inner.take() {
+            temp_file.cleanup().map_err(to_py_err)?;
+        }
+        Ok(())
+    }
+
+    fn persist(&mut self, path: &str) -> PyResult<String> {
+        let destination = self.temp_file()?.path().to_path_buf();
+        let persisted = self
+            .inner
+            .as_mut()
+            .expect("temporary file presence checked")
+            .persist(path)
+            .map_err(to_py_err)?;
+        debug_assert_ne!(destination, persisted);
+        Ok(persisted.to_string_lossy().into_owned())
+    }
+
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        _exc_type: &Bound<'_, PyAny>,
+        _exc_value: &Bound<'_, PyAny>,
+        _traceback: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        if let Some(temp_file) = self.inner.take()
+            && let Err(error) = temp_file.cleanup()
+        {
+            Self::warn_cleanup_failure(py, error)?;
+        }
+
+        Ok(false)
     }
 }
 
@@ -943,7 +1120,7 @@ impl ReaderBuilder {
     }
 
     fn build(&self, data: Vec<u8>) -> PyResult<Reader> {
-        let cursor = std::io::Cursor::new(data);
+        let cursor = Cursor::new(data);
         let projection = parse_projection(&self.selected_fields, self.record_key.as_str())?;
         let inner = build_reader_inner(
             cursor,
@@ -955,7 +1132,30 @@ impl ReaderBuilder {
             ),
             projection,
         )?;
-        Ok(Reader { inner })
+        Ok(Reader {
+            inner: ReaderKind::Buffer(inner),
+        })
+    }
+
+    fn build_temp(&self, temp_file: &TempFile) -> PyResult<Reader> {
+        let mut file = temp_file.open_file()?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(DryIceError::from)
+            .map_err(to_py_err)?;
+        let projection = parse_projection(&self.selected_fields, self.record_key.as_str())?;
+        let inner = build_reader_inner(
+            file,
+            (
+                self.sequence_codec.as_str(),
+                self.quality_codec.as_str(),
+                self.name_codec.as_str(),
+                self.record_key.as_str(),
+            ),
+            projection,
+        )?;
+        Ok(Reader {
+            inner: ReaderKind::File(inner),
+        })
     }
 }
 
@@ -973,10 +1173,10 @@ impl Reader {
 
     #[staticmethod]
     fn open(data: Vec<u8>) -> PyResult<Self> {
-        let cursor = std::io::Cursor::new(data);
-        let inner = ReaderKind::Full(ReaderInner::RawRawRaw(
+        let cursor = Cursor::new(data);
+        let inner = ReaderKind::Buffer(ReaderKindInner::Full(ReaderInner::RawRawRaw(
             RustReader::new(cursor).map_err(to_py_err)?,
-        ));
+        )));
         Ok(Self { inner })
     }
 
@@ -986,40 +1186,52 @@ impl Reader {
 
     fn __next__(&mut self) -> PyResult<Option<Record>> {
         match &mut self.inner {
-            ReaderKind::Full(inner) => {
-                let has_record = inner.next_record().map_err(to_py_err)?;
-                if !has_record {
-                    return Ok(None);
-                }
-
-                let name = inner.name().to_vec();
-                let sequence = inner.sequence().to_vec();
-                let quality = inner.quality().to_vec();
-                let key = inner.record_key().map_err(to_py_err)?;
-
-                Ok(Some(Record::full(name, sequence, quality, key)))
-            },
-            ReaderKind::Selected(inner) => inner
-                .next_projected_record()
-                .map(|projected| {
-                    projected.map(|record| match record {
-                        ProjectedRecordData::Name(name) => Record::name_only(name),
-                        ProjectedRecordData::Sequence(sequence) => Record::sequence_only(sequence),
-                        ProjectedRecordData::Quality(quality) => Record::quality_only(quality),
-                        ProjectedRecordData::Key(key) => Record::key_only(key),
-                        ProjectedRecordData::SequenceKey { sequence, key } => {
-                            Record::sequence_and_key(sequence, key)
-                        },
-                    })
-                })
-                .map_err(to_py_err),
+            ReaderKind::Buffer(inner) => next_reader_record(inner),
+            ReaderKind::File(inner) => next_reader_record(inner),
         }
     }
 }
 
 enum ReaderKind {
-    Full(ReaderInner),
-    Selected(SelectedReaderInner),
+    Buffer(ReaderKindInner<BufferReader>),
+    File(ReaderKindInner<File>),
+}
+
+enum ReaderKindInner<R> {
+    Full(ReaderInner<R>),
+    Selected(SelectedReaderInner<R>),
+}
+
+fn next_reader_record<R: Read>(inner: &mut ReaderKindInner<R>) -> PyResult<Option<Record>> {
+    match inner {
+        ReaderKindInner::Full(inner) => {
+            let has_record = inner.next_record().map_err(to_py_err)?;
+            if !has_record {
+                return Ok(None);
+            }
+
+            let name = inner.name().to_vec();
+            let sequence = inner.sequence().to_vec();
+            let quality = inner.quality().to_vec();
+            let key = inner.record_key().map_err(to_py_err)?;
+
+            Ok(Some(Record::full(name, sequence, quality, key)))
+        },
+        ReaderKindInner::Selected(inner) => inner
+            .next_projected_record()
+            .map(|projected| {
+                projected.map(|record| match record {
+                    ProjectedRecordData::Name(name) => Record::name_only(name),
+                    ProjectedRecordData::Sequence(sequence) => Record::sequence_only(sequence),
+                    ProjectedRecordData::Quality(quality) => Record::quality_only(quality),
+                    ProjectedRecordData::Key(key) => Record::key_only(key),
+                    ProjectedRecordData::SequenceKey { sequence, key } => {
+                        Record::sequence_and_key(sequence, key)
+                    },
+                })
+            })
+            .map_err(to_py_err),
+    }
 }
 
 #[pyfunction]
@@ -1039,14 +1251,16 @@ fn open_projected(
     name_codec: &str,
     record_key: &str,
 ) -> PyResult<Reader> {
-    let cursor = std::io::Cursor::new(data);
+    let cursor = Cursor::new(data);
     let projection = parse_projection_name(projection, record_key)?;
     let inner = build_reader_inner(
         cursor,
         (sequence_codec, quality_codec, name_codec, record_key),
         projection,
     )?;
-    Ok(Reader { inner })
+    Ok(Reader {
+        inner: ReaderKind::Buffer(inner),
+    })
 }
 
 #[pyfunction]
@@ -1061,6 +1275,11 @@ fn default_minimizer_key(sequence: &[u8]) -> PyResult<Option<Vec<u8>>> {
     Ok(DefaultMinimizer64::try_from_sequence(sequence)
         .map_err(to_py_err)?
         .map(|key| key.0.to_le_bytes().to_vec()))
+}
+
+#[pyfunction]
+fn temp_file() -> PyResult<TempFile> {
+    TempFile::new()
 }
 
 fn parse_projection(fields: &[String], key_kind: &str) -> PyResult<Projection> {
@@ -1126,25 +1345,25 @@ fn parse_projection_name(name: &str, key_kind: &str) -> PyResult<Projection> {
     parse_projection(&fields, key_kind)
 }
 
-fn build_reader_inner(
+fn build_reader_inner<R: Read>(
     cursor: R,
     codec_key: (&str, &str, &str, &str),
     projection: Projection,
-) -> PyResult<ReaderKind> {
+) -> PyResult<ReaderKindInner<R>> {
     match (codec_key, projection) {
-        (("raw", "raw", "raw", "none"), Projection::All) => Ok(ReaderKind::Full(
+        (("raw", "raw", "raw", "none"), Projection::All) => Ok(ReaderKindInner::Full(
             ReaderInner::RawRawRaw(RustReader::new(cursor).map_err(to_py_err)?),
         )),
-        (("raw", "raw", "raw", "none"), Projection::Name) => {
-            Ok(ReaderKind::Selected(SelectedReaderInner::RawRawRawName(
+        (("raw", "raw", "raw", "none"), Projection::Name) => Ok(ReaderKindInner::Selected(
+            SelectedReaderInner::RawRawRawName(
                 RustReader::builder()
                     .inner(cursor)
                     .select(SelectName)
                     .build()
                     .map_err(to_py_err)?,
-            )))
-        },
-        (("raw", "raw", "raw", "none"), Projection::Sequence) => Ok(ReaderKind::Selected(
+            ),
+        )),
+        (("raw", "raw", "raw", "none"), Projection::Sequence) => Ok(ReaderKindInner::Selected(
             SelectedReaderInner::RawRawRawSequence(
                 RustReader::builder()
                     .inner(cursor)
@@ -1153,30 +1372,30 @@ fn build_reader_inner(
                     .map_err(to_py_err)?,
             ),
         )),
-        (("raw", "raw", "raw", "none"), Projection::Quality) => {
-            Ok(ReaderKind::Selected(SelectedReaderInner::RawRawRawQuality(
+        (("raw", "raw", "raw", "none"), Projection::Quality) => Ok(ReaderKindInner::Selected(
+            SelectedReaderInner::RawRawRawQuality(
                 RustReader::builder()
                     .inner(cursor)
                     .select(SelectQuality)
                     .build()
                     .map_err(to_py_err)?,
-            )))
-        },
-        (("two_bit_exact", "raw", "raw", "none"), Projection::All) => Ok(ReaderKind::Full(
+            ),
+        )),
+        (("two_bit_exact", "raw", "raw", "none"), Projection::All) => Ok(ReaderKindInner::Full(
             ReaderInner::TwoBitRawRaw(RustReader::with_two_bit_exact(cursor).map_err(to_py_err)?),
         )),
-        (("two_bit_exact", "raw", "raw", "none"), Projection::Name) => {
-            Ok(ReaderKind::Selected(SelectedReaderInner::TwoBitRawRawName(
+        (("two_bit_exact", "raw", "raw", "none"), Projection::Name) => Ok(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitRawRawName(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
                     .select(SelectName)
                     .build()
                     .map_err(to_py_err)?,
-            )))
-        },
+            )),
+        ),
         (("two_bit_exact", "raw", "raw", "none"), Projection::Sequence) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::TwoBitRawRawSequence(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitRawRawSequence(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1185,18 +1404,18 @@ fn build_reader_inner(
                     .map_err(to_py_err)?,
             )),
         ),
-        (("two_bit_exact", "raw", "raw", "none"), Projection::Quality) => Ok(ReaderKind::Selected(
-            SelectedReaderInner::TwoBitRawRawQuality(
+        (("two_bit_exact", "raw", "raw", "none"), Projection::Quality) => Ok(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitRawRawQuality(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
                     .select(SelectQuality)
                     .build()
                     .map_err(to_py_err)?,
-            ),
-        )),
+            )),
+        ),
         (("two_bit_exact", "binned", "split", "none"), Projection::All) => {
-            Ok(ReaderKind::Full(ReaderInner::TwoBitBinnedSplit(
+            Ok(ReaderKindInner::Full(ReaderInner::TwoBitBinnedSplit(
                 RustReader::with_codecs::<TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec>(
                     cursor,
                 )
@@ -1204,7 +1423,7 @@ fn build_reader_inner(
             )))
         },
         (("two_bit_exact", "binned", "split", "none"), Projection::Name) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::TwoBitBinnedSplitName(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitBinnedSplitName(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1216,7 +1435,7 @@ fn build_reader_inner(
             )),
         ),
         (("two_bit_exact", "binned", "split", "none"), Projection::Sequence) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::TwoBitBinnedSplitSequence(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitBinnedSplitSequence(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1228,7 +1447,7 @@ fn build_reader_inner(
             )),
         ),
         (("two_bit_exact", "binned", "split", "none"), Projection::Quality) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::TwoBitBinnedSplitQuality(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitBinnedSplitQuality(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1240,7 +1459,7 @@ fn build_reader_inner(
             )),
         ),
         (("two_bit_lossy_n", "binned", "split", "none"), Projection::All) => {
-            Ok(ReaderKind::Full(ReaderInner::LossyBinnedSplit(
+            Ok(ReaderKindInner::Full(ReaderInner::LossyBinnedSplit(
                 RustReader::with_codecs::<TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec>(
                     cursor,
                 )
@@ -1248,7 +1467,7 @@ fn build_reader_inner(
             )))
         },
         (("two_bit_lossy_n", "binned", "split", "none"), Projection::Name) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::LossyBinnedSplitName(
+            ReaderKindInner::Selected(SelectedReaderInner::LossyBinnedSplitName(
                 RustReader::builder()
                     .inner(cursor)
                     .sequence_codec::<TwoBitLossyNCodec>()
@@ -1260,7 +1479,7 @@ fn build_reader_inner(
             )),
         ),
         (("two_bit_lossy_n", "binned", "split", "none"), Projection::Sequence) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::LossyBinnedSplitSequence(
+            ReaderKindInner::Selected(SelectedReaderInner::LossyBinnedSplitSequence(
                 RustReader::builder()
                     .inner(cursor)
                     .sequence_codec::<TwoBitLossyNCodec>()
@@ -1272,7 +1491,7 @@ fn build_reader_inner(
             )),
         ),
         (("two_bit_lossy_n", "binned", "split", "none"), Projection::Quality) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::LossyBinnedSplitQuality(
+            ReaderKindInner::Selected(SelectedReaderInner::LossyBinnedSplitQuality(
                 RustReader::builder()
                     .inner(cursor)
                     .sequence_codec::<TwoBitLossyNCodec>()
@@ -1283,11 +1502,11 @@ fn build_reader_inner(
                     .map_err(to_py_err)?,
             )),
         ),
-        (("raw", "raw", "raw", "bytes8"), Projection::All) => Ok(ReaderKind::Full(
+        (("raw", "raw", "raw", "bytes8"), Projection::All) => Ok(ReaderKindInner::Full(
             ReaderInner::RawRawRawB8(RustReader::with_bytes8_key(cursor).map_err(to_py_err)?),
         )),
         (("omitted", "omitted", "omitted", "bytes8"), Projection::All) => {
-            Ok(ReaderKind::Full(ReaderInner::RawOmitOmitB8(
+            Ok(ReaderKindInner::Full(ReaderInner::RawOmitOmitB8(
                 RustReader::builder()
                     .inner(cursor)
                     .omit_sequence()
@@ -1299,7 +1518,7 @@ fn build_reader_inner(
             )))
         },
         (("raw", "omitted", "omitted", "bytes8"), Projection::All) => {
-            Ok(ReaderKind::Full(ReaderInner::RawSeqOnlyB8(
+            Ok(ReaderKindInner::Full(ReaderInner::RawSeqOnlyB8(
                 RustReader::builder()
                     .inner(cursor)
                     .omit_quality()
@@ -1310,7 +1529,7 @@ fn build_reader_inner(
             )))
         },
         (("omitted", "omitted", "raw", "bytes8"), Projection::All) => {
-            Ok(ReaderKind::Full(ReaderInner::RawNameOnlyB8(
+            Ok(ReaderKindInner::Full(ReaderInner::RawNameOnlyB8(
                 RustReader::builder()
                     .inner(cursor)
                     .omit_sequence()
@@ -1320,28 +1539,28 @@ fn build_reader_inner(
                     .map_err(to_py_err)?,
             )))
         },
-        (("raw", "raw", "raw", "bytes8"), Projection::Key) => {
-            Ok(ReaderKind::Selected(SelectedReaderInner::RawRawRawB8Key(
+        (("raw", "raw", "raw", "bytes8"), Projection::Key) => Ok(ReaderKindInner::Selected(
+            SelectedReaderInner::RawRawRawB8Key(
                 RustReader::builder()
                     .inner(cursor)
                     .bytes8_key()
                     .select(SelectKey)
                     .build()
                     .map_err(to_py_err)?,
-            )))
-        },
-        (("raw", "raw", "raw", "bytes8"), Projection::SequenceKey) => Ok(ReaderKind::Selected(
-            SelectedReaderInner::RawRawRawB8SequenceKey(
+            ),
+        )),
+        (("raw", "raw", "raw", "bytes8"), Projection::SequenceKey) => Ok(
+            ReaderKindInner::Selected(SelectedReaderInner::RawRawRawB8SequenceKey(
                 RustReader::builder()
                     .inner(cursor)
                     .bytes8_key()
                     .select(SelectSequenceKey)
                     .build()
                     .map_err(to_py_err)?,
-            ),
-        )),
+            )),
+        ),
         (("two_bit_exact", "binned", "split", "bytes8"), Projection::All) => {
-            Ok(ReaderKind::Full(ReaderInner::TwoBitBinnedSplitB8(
+            Ok(ReaderKindInner::Full(ReaderInner::TwoBitBinnedSplitB8(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1353,7 +1572,7 @@ fn build_reader_inner(
             )))
         },
         (("two_bit_exact", "binned", "split", "bytes8"), Projection::Key) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::TwoBitBinnedSplitB8Key(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitBinnedSplitB8Key(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1366,7 +1585,7 @@ fn build_reader_inner(
             )),
         ),
         (("two_bit_exact", "binned", "split", "bytes8"), Projection::SequenceKey) => Ok(
-            ReaderKind::Selected(SelectedReaderInner::TwoBitBinnedSplitB8SequenceKey(
+            ReaderKindInner::Selected(SelectedReaderInner::TwoBitBinnedSplitB8SequenceKey(
                 RustReader::builder()
                     .inner(cursor)
                     .two_bit_exact()
@@ -1410,11 +1629,14 @@ fn push_selected_field(fields: &mut Vec<String>, field: &str) {
 fn dryice_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WriterBuilder>()?;
     m.add_class::<Writer>()?;
+    m.add_class::<TempWriter>()?;
     m.add_class::<ReaderBuilder>()?;
     m.add_class::<Reader>()?;
     m.add_class::<Record>()?;
+    m.add_class::<TempFile>()?;
     m.add_function(wrap_pyfunction!(open_projected, m)?)?;
     m.add_function(wrap_pyfunction!(default_prefix_kmer_key, m)?)?;
     m.add_function(wrap_pyfunction!(default_minimizer_key, m)?)?;
+    m.add_function(wrap_pyfunction!(temp_file, m)?)?;
     Ok(())
 }
