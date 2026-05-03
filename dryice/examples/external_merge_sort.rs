@@ -14,7 +14,9 @@
 
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use dryice::{Bytes8Key, DryIceReader, DryIceWriter, SeqRecord, SeqRecordLike};
+use dryice::{
+    Bytes8Key, DryIceError, DryIceReader, DryIceWriter, SeqRecord, SeqRecordLike, TempDryIceFile,
+};
 
 /// Compute a simple sort key from a sequence by hashing the first
 /// 8 bytes. In a real application, this would be a minimizer hash,
@@ -54,12 +56,8 @@ impl Ord for MergeEntry {
     }
 }
 
-fn main() -> Result<(), dryice::DryIceError> {
-    // Generate synthetic records with random-ish sequences.
-    let total_records = 200;
-    let chunk_size = 50;
-
-    let all_records: Vec<SeqRecord> = (0..total_records)
+fn generate_records(total_records: usize) -> Vec<SeqRecord> {
+    (0..total_records)
         .map(|i: usize| {
             let name = format!("read_{i:04}").into_bytes();
             let bases = [b'A', b'C', b'G', b'T'];
@@ -69,59 +67,59 @@ fn main() -> Result<(), dryice::DryIceError> {
             let qual = vec![b'I'; seq.len()];
             SeqRecord::new(name, seq, qual).expect("valid record")
         })
-        .collect();
+        .collect()
+}
 
-    println!(
-        "Generated {} records, sorting in chunks of {}",
-        all_records.len(),
-        chunk_size
-    );
+fn create_sorted_runs(
+    records: &[SeqRecord],
+    chunk_size: usize,
+) -> Result<Vec<TempDryIceFile>, DryIceError> {
+    let mut sorted_runs: Vec<TempDryIceFile> = Vec::new();
 
-    // Phase 1: create sorted runs.
-    //
-    // In a real application, each chunk would be read from a FASTQ
-    // file until RAM is full, sorted in memory, and spilled to a
-    // temp file. Here we use in-memory buffers.
-    let mut sorted_runs: Vec<Vec<u8>> = Vec::new();
-
-    for chunk in all_records.chunks(chunk_size) {
+    for chunk in records.chunks(chunk_size) {
         let mut keyed: Vec<(Bytes8Key, &SeqRecord)> = chunk
             .iter()
             .map(|r| (compute_sort_key(r.sequence()), r))
             .collect();
 
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        keyed.sort_by_key(|(key, _)| *key);
 
-        let mut run_buf = Vec::new();
-        let mut writer = DryIceWriter::builder()
-            .inner(&mut run_buf)
-            .bytes8_key()
-            .target_block_records(25)
-            .build();
+        let run = TempDryIceFile::new()?;
+        {
+            let file = run.open()?;
+            let mut writer = DryIceWriter::builder()
+                .inner(file)
+                .bytes8_key()
+                .target_block_records(25)
+                .build();
 
-        for (key, record) in &keyed {
-            writer.write_record_with_key(*record, key)?;
+            for (key, record) in &keyed {
+                writer.write_record_with_key(*record, key)?;
+            }
+            writer.finish()?;
         }
-        writer.finish()?;
 
-        sorted_runs.push(run_buf);
+        sorted_runs.push(run);
     }
 
-    println!(
-        "Created {} sorted runs ({} bytes total)",
-        sorted_runs.len(),
-        sorted_runs.iter().map(Vec::len).sum::<usize>()
-    );
+    Ok(sorted_runs)
+}
 
-    // Phase 2: k-way merge using keys only.
-    //
-    // Open a reader for each sorted run and seed a min-heap with
-    // the first record's key from each run. The merge loop pops
-    // the smallest key, emits the corresponding record, and
-    // advances that reader.
+fn sorted_run_bytes(sorted_runs: &[TempDryIceFile]) -> Result<u64, DryIceError> {
+    let mut total = 0u64;
+    for run in sorted_runs {
+        total += run.path().metadata()?.len();
+    }
+    Ok(total)
+}
+
+fn merge_sorted_runs(sorted_runs: &[TempDryIceFile]) -> Result<Vec<u8>, DryIceError> {
     let mut readers: Vec<_> = sorted_runs
         .iter()
-        .map(|buf| DryIceReader::with_bytes8_key(buf.as_slice()))
+        .map(|run| {
+            let file = run.open()?;
+            DryIceReader::with_bytes8_key(file)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut heap = BinaryHeap::new();
@@ -138,14 +136,10 @@ fn main() -> Result<(), dryice::DryIceError> {
         .bytes8_key()
         .build();
 
-    let mut merged_count = 0;
     while let Some(entry) = heap.pop() {
-        // Copy the current record's fields so we can release the
-        // borrow on the reader and then advance it.
         let reader = &readers[entry.run_index];
         let record = SeqRecord::from_slices(reader.name(), reader.sequence(), reader.quality())?;
         output_writer.write_record_with_key(&record, &entry.key)?;
-        merged_count += 1;
 
         let reader = &mut readers[entry.run_index];
         if reader.next_record()? {
@@ -158,13 +152,11 @@ fn main() -> Result<(), dryice::DryIceError> {
     }
     output_writer.finish()?;
 
-    println!(
-        "Merged {merged_count} records into {} bytes",
-        output_buf.len()
-    );
+    Ok(output_buf)
+}
 
-    // Verify the output is sorted by key.
-    let mut verify_reader = DryIceReader::with_bytes8_key(output_buf.as_slice())?;
+fn verify_sorted_output(output_buf: &[u8]) -> Result<usize, DryIceError> {
+    let mut verify_reader = DryIceReader::with_bytes8_key(output_buf)?;
     let mut prev_key: Option<Bytes8Key> = None;
     let mut verified = 0;
     while verify_reader.next_record()? {
@@ -176,8 +168,54 @@ fn main() -> Result<(), dryice::DryIceError> {
         verified += 1;
     }
 
+    Ok(verified)
+}
+
+fn main() -> Result<(), DryIceError> {
+    let total_records = 200;
+    let chunk_size = 50;
+    let all_records = generate_records(total_records);
+
+    println!(
+        "Generated {} records, sorting in chunks of {}",
+        all_records.len(),
+        chunk_size
+    );
+
+    // Phase 1: create sorted runs. In a real application, each chunk would be
+    // read from a FASTQ file until RAM is full, sorted in memory, and spilled
+    // to an owned temporary file.
+    let sorted_runs = create_sorted_runs(&all_records, chunk_size)?;
+
+    println!(
+        "Created {} sorted runs ({} bytes total)",
+        sorted_runs.len(),
+        sorted_run_bytes(&sorted_runs)?
+    );
+
+    // Phase 2: k-way merge using keys only.
+    //
+    // Open a reader for each sorted run and seed a min-heap with
+    // the first record's key from each run. The merge loop pops
+    // the smallest key, emits the corresponding record, and
+    // advances that reader.
+    let output_buf = merge_sorted_runs(&sorted_runs)?;
+
+    println!(
+        "Merged {} records into {} bytes",
+        total_records,
+        output_buf.len()
+    );
+
+    // Verify the output is sorted by key.
+    let verified = verify_sorted_output(&output_buf)?;
+
     println!("Verified {verified} records are in sorted order");
     assert_eq!(verified, total_records);
+
+    for run in sorted_runs {
+        run.cleanup()?;
+    }
 
     Ok(())
 }

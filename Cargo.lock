@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-benchmarks"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "dryice-bio",
@@ -469,11 +469,12 @@ dependencies = [
 
 [[package]]
 name = "dryice-bio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bio",
  "bitnuc",
  "futures-core",
+ "log",
  "memmap2",
  "noodles-fastq",
  "proptest",
@@ -485,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-node"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dryice-bio",
  "napi",
@@ -495,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "dryice-python"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dryice-bio",
  "pyo3",

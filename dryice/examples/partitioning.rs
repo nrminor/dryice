@@ -1,13 +1,13 @@
 //! Temporary partitioning of records into buckets.
 //!
 //! This example demonstrates using dryice to partition records into
-//! separate temporary buffers based on some derived criterion (here,
-//! the first base of the sequence). Each partition gets its own
+//! separate owned temporary files based on some derived criterion
+//! (here, the first base of the sequence). Each partition gets its own
 //! writer, and records can be reloaded from any partition later.
 //!
 //! Run with: `cargo run --example partitioning`
 
-use dryice::{DryIceReader, DryIceWriter, SeqRecord};
+use dryice::{DryIceReader, DryIceWriter, SeqRecord, TempDryIceFile};
 
 fn main() -> Result<(), dryice::DryIceError> {
     let records = vec![
@@ -20,11 +20,16 @@ fn main() -> Result<(), dryice::DryIceError> {
     ];
 
     // Partition into 4 buckets by first base.
-    let mut buckets: Vec<Vec<u8>> = vec![Vec::new(); 4];
-    let mut writers: Vec<DryIceWriter<&mut Vec<u8>>> = buckets
-        .iter_mut()
-        .map(|buf| DryIceWriter::builder().inner(buf).build())
-        .collect();
+    let buckets: Vec<TempDryIceFile> = (0..4)
+        .map(|_| TempDryIceFile::new())
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut writers: Vec<_> = buckets
+        .iter()
+        .map(|bucket| {
+            let file = bucket.open()?;
+            Ok(DryIceWriter::builder().inner(file).build())
+        })
+        .collect::<Result<Vec<_>, dryice::DryIceError>>()?;
 
     for record in &records {
         let bucket = match record.sequence().first() {
@@ -42,18 +47,19 @@ fn main() -> Result<(), dryice::DryIceError> {
 
     // Read back each partition.
     let labels = ["A-bucket", "C-bucket", "G-bucket", "T-bucket"];
-    for (i, buf) in buckets.iter().enumerate() {
-        if buf.is_empty() {
-            println!("{}: empty", labels[i]);
-            continue;
-        }
-
-        let mut reader = DryIceReader::new(buf.as_slice())?;
+    for (i, bucket) in buckets.iter().enumerate() {
+        let file = bucket.open()?;
+        let mut reader = DryIceReader::new(file)?;
         let mut count = 0;
         while reader.next_record()? {
             count += 1;
         }
-        println!("{}: {count} records ({} bytes)", labels[i], buf.len());
+        let bytes = bucket.path().metadata()?.len();
+        println!("{}: {count} records ({bytes} bytes)", labels[i]);
+    }
+
+    for bucket in buckets {
+        bucket.cleanup()?;
     }
 
     Ok(())

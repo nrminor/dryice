@@ -145,6 +145,39 @@ All codec and key traits are public, so users can implement their own encodings 
 
 An `async` feature flag enables `AsyncDryIceWriter` and `AsyncDryIceReader` types that work with `tokio::io::AsyncRead` / `AsyncWrite`. Block building and codec encoding remain synchronous; only the I/O operations are async. The same builder produces sync or async writers via `build()` or `build_async()`.
 
+### Temporary file lifecycle
+
+For filesystem-backed intermediate data, prefer letting `dryice` create and own the temporary file. `TempDryIceFile` composes with the normal stream-oriented reader and writer APIs, but removes the backing file by default when the guard is cleaned up or dropped. If you pass your own `File`, buffer, socket, or other `Read`/`Write` value into `dryice`, you still own that resource's lifecycle.
+
+```rust
+use dryice::{DryIceReader, DryIceWriter, SeqRecord, TempDryIceFile};
+
+# fn example() -> Result<(), dryice::DryIceError> {
+let temp = TempDryIceFile::new()?;
+
+{
+    let file = temp.open()?;
+    let mut writer = DryIceWriter::builder().inner(file).build();
+    let record = SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec())?;
+    writer.write_record(&record)?;
+    writer.finish()?;
+}
+
+{
+    let file = temp.open()?;
+    let mut reader = DryIceReader::new(file)?;
+    while reader.next_record()? {
+        // use the current record
+    }
+}
+
+temp.cleanup()?; // optional; Drop also attempts best-effort cleanup
+# Ok(())
+# }
+```
+
+Use `persist(...)` only when a temporary file should become a caller-owned artifact rather than evaporating.
+
 ### Built-in Codecs
 
 DryIce ships with built-in codecs for all three record fields, plus built-in record key types. Users can also implement their own by implementing the `SequenceCodec`, `QualityCodec`, `NameCodec`, or `RecordKey` traits.
@@ -232,11 +265,21 @@ let writer = DryIceWriter::builder()
 
 The [`dryice/examples/`](dryice/examples/) directory contains standalone programs demonstrating the primary workflows `dryice` is designed for. Run any example with `cargo run --example <name>`.
 
-- [**spill_reload**](dryice/examples/spill_reload.rs) — The most fundamental `dryice` pattern: spilling a batch of sequencing records to a temporary buffer and reloading them, demonstrating the building block for any out-of-core workflow.
+- [**temp_file_lifecycle**](dryice/examples/temp_file_lifecycle.rs) — The smallest example of the recommended filesystem-backed workflow: create an owned temporary `dryice` file, write records, read them back, and clean up explicitly while still having drop-time cleanup as a fallback.
 
-- [**external_merge_sort**](dryice/examples/external_merge_sort.rs) — A complete external k-way merge sort that spills sorted runs with precomputed 8-byte record keys, then merges them using a min-heap that compares only the keys without touching sequence payloads.
+- [**kmer_keys**](dryice/examples/kmer_keys.rs) — Progressive-disclosure ergonomics for the built-in packed canonical prefix-kmer and minimizer key families.
 
-- [**partitioning**](dryice/examples/partitioning.rs) — Partitioning records into separate temporary buckets based on a derived criterion, showing how `dryice` can serve as fast backing storage for partitioning stages in larger pipelines.
+- [**key_only_kmers**](dryice/examples/key_only_kmers.rs) — The most compact kmer-oriented workflow: write one derived minimizer key per record and omit the row payload entirely.
+
+- [**kmer_name_pairs**](dryice/examples/kmer_name_pairs.rs) — A partial-payload kmer workflow that stores minimizer keys plus record names for lightweight traceability.
+
+- [**kmer_partitioning**](dryice/examples/kmer_partitioning.rs) — Partitioning records into owned temporary files using packed canonical prefix-kmer keys while retaining names only.
+
+- [**spill_reload**](dryice/examples/spill_reload.rs) — The most fundamental `dryice` pattern: spilling a batch of sequencing records to an owned temporary file and reloading them, demonstrating the building block for any out-of-core workflow.
+
+- [**external_merge_sort**](dryice/examples/external_merge_sort.rs) — A complete external k-way merge sort that spills sorted runs into owned temporary files with precomputed 8-byte record keys, then merges them using a min-heap that compares only the keys without touching sequence payloads.
+
+- [**partitioning**](dryice/examples/partitioning.rs) — Partitioning records into separate owned temporary buckets based on a derived criterion, showing how `dryice` can serve as fast backing storage for partitioning stages in larger pipelines.
 
 - [**compact_codecs**](dryice/examples/compact_codecs.rs) — Comparing raw versus compact storage using `TwoBitExactCodec`, `BinnedQualityCodec`, and `SplitNameCodec`, with size ratios and round-trip verification.
 

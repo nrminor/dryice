@@ -1,13 +1,15 @@
 //! Spill/reload pattern for external sorting.
 //!
 //! This example demonstrates the core use case for dryice: spilling
-//! a batch of sequencing records to a temporary buffer (standing in
-//! for a temp file), then reloading them. In a real external sort,
-//! you would spill sorted runs and then merge them back.
+//! a batch of sequencing records to an owned temporary file, then
+//! reloading them. In a real external sort, you would spill sorted
+//! runs and then merge them back.
 //!
 //! Run with: `cargo run --example spill_reload`
 
-use dryice::{DryIceReader, DryIceWriter, SeqRecord};
+use std::io::{Seek, SeekFrom};
+
+use dryice::{DryIceReader, DryIceWriter, SeqRecord, TempDryIceFile};
 
 fn main() -> Result<(), dryice::DryIceError> {
     let records: Vec<SeqRecord> = (0..100)
@@ -22,26 +24,33 @@ fn main() -> Result<(), dryice::DryIceError> {
 
     println!("Generated {} records", records.len());
 
-    // Spill to a buffer (in practice, this would be a temp file).
-    let mut spill_buf = Vec::new();
-    let mut writer = DryIceWriter::builder()
-        .inner(&mut spill_buf)
-        .target_block_records(25)
-        .build();
+    // Spill to an owned temporary file. If cleanup() were omitted, the guard
+    // would still try best-effort cleanup on drop.
+    let spill = TempDryIceFile::new()?;
+    let mut file = {
+        let file = spill.open()?;
+        let mut writer = DryIceWriter::builder()
+            .inner(file)
+            .target_block_records(25)
+            .build();
 
-    for record in &records {
-        writer.write_record(record)?;
-    }
-    writer.finish()?;
+        for record in &records {
+            writer.write_record(record)?;
+        }
+        writer.finish()?
+    };
+
+    let spilled_bytes = spill.path().metadata()?.len();
 
     println!(
         "Spilled {} bytes ({} bytes/record avg)",
-        spill_buf.len(),
-        spill_buf.len() / records.len()
+        spilled_bytes,
+        spilled_bytes / u64::try_from(records.len()).expect("record count should fit in u64")
     );
 
-    // Reload from the buffer.
-    let mut reader = DryIceReader::new(spill_buf.as_slice())?;
+    // Reload from the temporary file.
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = DryIceReader::new(file)?;
     let mut count = 0;
     while reader.next_record()? {
         count += 1;
@@ -50,7 +59,8 @@ fn main() -> Result<(), dryice::DryIceError> {
     println!("Reloaded {count} records (zero-copy)");
 
     // Or reload into owned records if needed.
-    let reader = DryIceReader::new(spill_buf.as_slice())?;
+    let file = spill.open()?;
+    let reader = DryIceReader::new(file)?;
     let reloaded: Vec<SeqRecord> = reader.into_records().collect::<Result<Vec<_>, _>>()?;
 
     assert_eq!(reloaded.len(), records.len());
@@ -61,5 +71,6 @@ fn main() -> Result<(), dryice::DryIceError> {
     }
 
     println!("Verified all records match");
+    spill.cleanup()?;
     Ok(())
 }

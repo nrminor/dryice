@@ -2,13 +2,13 @@
 //!
 //! This example upgrades the older first-base partitioning story into a more
 //! domain-aware flow by deriving a packed canonical prefix kmer key and using it
-//! to choose a partition bucket. The resulting files retain names only, which is
-//! often a useful compromise for later inspection while still keeping the on-disk
-//! representation compact.
+//! to choose a partition bucket. The resulting owned temporary files retain names
+//! only, which is often a useful compromise for later inspection while still
+//! keeping the on-disk representation compact.
 //!
 //! Run with: `cargo run --example kmer_partitioning`
 
-use dryice::{DefaultPrefixKmer64, DryIceReader, DryIceWriter, SeqRecord};
+use dryice::{DefaultPrefixKmer64, DryIceReader, DryIceWriter, SeqRecord, TempDryIceFile};
 
 fn main() -> Result<(), dryice::DryIceError> {
     let records = [
@@ -34,16 +34,21 @@ fn main() -> Result<(), dryice::DryIceError> {
         )?,
     ];
 
-    let mut buckets: Vec<Vec<u8>> = vec![Vec::new(); 4];
+    let buckets: Vec<TempDryIceFile> = (0..4)
+        .map(|_| TempDryIceFile::new())
+        .collect::<Result<Vec<_>, _>>()?;
     let mut writers: Vec<_> = buckets
-        .iter_mut()
-        .map(|buf| {
-            DryIceWriter::builder()
-                .inner(buf)
-                .prefix_kmers_with_names()
-                .build()
+        .iter()
+        .map(|bucket| {
+            let file = bucket.open()?;
+            Ok::<_, dryice::DryIceError>(
+                DryIceWriter::builder()
+                    .inner(file)
+                    .prefix_kmers_with_names()
+                    .build(),
+            )
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     for record in &records {
         if let Some(key) = DefaultPrefixKmer64::try_from_sequence(record.sequence())? {
@@ -57,9 +62,10 @@ fn main() -> Result<(), dryice::DryIceError> {
         writer.finish()?;
     }
 
-    for (i, buf) in buckets.iter().enumerate() {
+    for (i, bucket) in buckets.iter().enumerate() {
+        let file = bucket.open()?;
         let mut reader = DryIceReader::builder()
-            .inner(buf.as_slice())
+            .inner(file)
             .sequence_codec::<dryice::OmittedSequenceCodec>()
             .quality_codec::<dryice::OmittedQualityCodec>()
             .record_key::<DefaultPrefixKmer64>()
@@ -69,7 +75,12 @@ fn main() -> Result<(), dryice::DryIceError> {
         while reader.next_record()? {
             count += 1;
         }
-        println!("bucket {i}: {count} records ({} bytes)", buf.len());
+        let bytes = bucket.path().metadata()?.len();
+        println!("bucket {i}: {count} records ({bytes} bytes)");
+    }
+
+    for bucket in buckets {
+        bucket.cleanup()?;
     }
 
     Ok(())

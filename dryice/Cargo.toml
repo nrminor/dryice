@@ -12,6 +12,7 @@ name = "dryice"
 [dependencies]
 bitnuc = "0.4.1"
 futures-core = { version = "0.3.32", optional = true }
+log = "0.4"
 memmap2 = { version = "0.9.10", optional = true }
 simd-minimizers = "2.3.1"
 thiserror = "2"

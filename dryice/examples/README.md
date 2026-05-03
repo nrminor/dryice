@@ -2,6 +2,10 @@
 
 These examples demonstrate the primary workflows that `dryice` is designed to support. Each one is a standalone Rust program that can be run with `cargo run --example <name>`.
 
+## temp_file_lifecycle
+
+The smallest example of the recommended filesystem-backed workflow. It creates an owned temporary `dryice` file with `TempDryIceFile`, writes records through the normal writer API, reads them back through the normal reader API, and cleans up explicitly while still relying on best-effort drop cleanup as a safety net. This is the example to read first if you want `dryice` files to evaporate after an intermediate pipeline stage.
+
 ## kmer_keys
 
 The flagship example for the new kmer-derived key families and their progressive-disclosure ergonomics. This example shows how built-in packed canonical key families for prefixes and minimizers compose with the normal keyed writer and reader APIs, while also demonstrating the builder conveniences that reduce type noise without changing the underlying storage model.
@@ -16,19 +20,19 @@ This example shows that `dryice` now supports more than the two extremes of “f
 
 ## kmer_partitioning
 
-This example upgrades the old first-base partitioning idea into a more bioinformatics-native flow by deriving packed canonical prefix kmer keys and using them to bucket records. Each bucket keeps names plus keys only, showing how real derived genomic features can drive temporary partitioning workflows directly.
+This example upgrades the old first-base partitioning idea into a more bioinformatics-native flow by deriving packed canonical prefix kmer keys and using them to bucket records. Each bucket is an owned temporary file and keeps names plus keys only, showing how real derived genomic features can drive temporary partitioning workflows directly without leaving stale intermediate files behind.
 
 ## spill_reload
 
-The most fundamental `dryice` pattern: spilling a batch of sequencing records to a temporary buffer and reloading them later. This is the building block for any out-of-core workflow where data needs to move to disk and back without paying FASTQ reparse costs. The example generates 100 synthetic records, spills them with configurable block sizes, and reloads them using both the zero-copy primary path and the owned-record convenience iterator, verifying exact round-trip fidelity.
+The most fundamental `dryice` pattern: spilling a batch of sequencing records to an owned temporary file and reloading them later. This is the building block for any out-of-core workflow where data needs to move to disk and back without paying FASTQ reparse costs. The example generates 100 synthetic records, spills them with configurable block sizes, and reloads them using both the zero-copy primary path and the owned-record convenience iterator, verifying exact round-trip fidelity before explicit cleanup.
 
 ## external_merge_sort
 
-The flagship use case for `dryice` and the reason record keys exist. This example implements a complete external k-way merge sort of sequencing records that are too large to fit in memory. It works in two phases: first, records are read in RAM-sized chunks, each chunk is sorted by a precomputed 8-byte key derived from the sequence, and the sorted run is spilled to a `dryice` temp file with the keys stored alongside the records. Second, all sorted runs are opened simultaneously and merged using a min-heap that compares only the 8-byte keys — the full sequence and quality payloads are never touched during comparison. The winning record is piped to the output writer, and the result is verified to be in globally sorted order.
+The flagship use case for `dryice` and the reason record keys exist. This example implements a complete external k-way merge sort of sequencing records that are too large to fit in memory. It works in two phases: first, records are read in RAM-sized chunks, each chunk is sorted by a precomputed 8-byte key derived from the sequence, and the sorted run is spilled to an owned temporary `dryice` file with the keys stored alongside the records. Second, all sorted runs are opened simultaneously and merged using a min-heap that compares only the 8-byte keys — the full sequence and quality payloads are never touched during comparison. The winning record is piped to the output writer, the result is verified to be in globally sorted order, and the sorted-run files are cleaned up.
 
 ## partitioning
 
-Many sequencing workflows need to group reads into buckets before further processing — for example, by minimizer, barcode, or some other derived criterion. This example partitions records into four buckets based on the first base of the sequence, writing each bucket to its own `dryice` buffer. It then reads each partition back and reports the record counts and sizes, demonstrating how `dryice` can serve as fast temporary storage for partitioning stages in larger pipelines.
+Many sequencing workflows need to group reads into buckets before further processing — for example, by minimizer, barcode, or some other derived criterion. This example partitions records into four buckets based on the first base of the sequence, writing each bucket to its own owned temporary `dryice` file. It then reads each partition back and reports the record counts and sizes, demonstrating how `dryice` can serve as fast temporary storage for partitioning stages in larger pipelines without leaving cleanup to the caller.
 
 ## compact_codecs
 

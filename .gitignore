@@ -30,6 +30,7 @@
 !/dryice/src/error.rs
 !/dryice/src/fields.rs
 !/dryice/src/record.rs
+!/dryice/src/temp.rs
 !/dryice/src/block
 !/dryice/src/block/mod.rs
 !/dryice/src/block/builder.rs
@@ -58,6 +59,7 @@
 !/dryice/examples/key_only_kmers.rs
 !/dryice/examples/kmer_name_pairs.rs
 !/dryice/examples/kmer_partitioning.rs
+!/dryice/examples/temp_file_lifecycle.rs
 !/dryice/examples/noodles_adapter.rs
 !/dryice/examples/rust_bio_adapter.rs
 !/dryice/examples/README.md
@@ -65,6 +67,7 @@
 !/dryice/tests/round_trip.rs
 !/dryice/tests/async_round_trip.rs
 !/dryice/tests/mmap_round_trip.rs
+!/dryice/tests/temp.rs
 
 # === Allowed: benchmarks crate ===
 !/benchmarks

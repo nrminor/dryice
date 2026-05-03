@@ -235,6 +235,40 @@
 //! # }
 //! ```
 //!
+//! # Temporary file lifecycle
+//!
+//! For filesystem-backed intermediate data, prefer letting `dryice` create and
+//! own the temporary file. [`TempDryIceFile`] composes with the normal
+//! stream-oriented reader and writer APIs, but removes the backing file by
+//! default when the guard is cleaned up or dropped.
+//!
+//! ```
+//! use std::io::{Seek, SeekFrom};
+//!
+//! use dryice::{DryIceReader, DryIceWriter, SeqRecord, TempDryIceFile};
+//!
+//! # fn example() -> Result<(), dryice::DryIceError> {
+//! let temp = TempDryIceFile::new()?;
+//!
+//! let mut file = {
+//!     let file = temp.open()?;
+//!     let mut writer = DryIceWriter::builder().inner(file).build();
+//!     let record = SeqRecord::new(b"r1".to_vec(), b"ACGT".to_vec(), b"!!!!".to_vec())?;
+//!     writer.write_record(&record)?;
+//!     writer.finish()?
+//! };
+//!
+//! file.seek(SeekFrom::Start(0))?;
+//! let mut reader = DryIceReader::new(file)?;
+//! while reader.next_record()? {
+//!     // use the current record
+//! }
+//!
+//! temp.cleanup()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Reading with non-default codecs
 //!
 //! ```
@@ -310,6 +344,7 @@ pub mod key;
 #[cfg(feature = "mmap")]
 pub mod mmap_io;
 mod record;
+pub mod temp;
 
 #[cfg(feature = "async")]
 pub use async_io::{AsyncDryIceReader, AsyncDryIceWriter};
@@ -329,3 +364,4 @@ pub type DefaultMinimizer64 = Minimizer64<31, 15>;
 #[cfg(feature = "mmap")]
 pub use mmap_io::MmapDryIceReader;
 pub use record::{EMPTY_RECORD, EmptyRecord, SeqRecord, SeqRecordExt, SeqRecordLike};
+pub use temp::TempDryIceFile;
