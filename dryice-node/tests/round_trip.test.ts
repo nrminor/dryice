@@ -1,10 +1,13 @@
 import { test, expect, describe } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
 import {
   WriterBuilder,
   Reader,
   ReaderBuilder,
   defaultMinimizerKey,
   defaultPrefixKmerKey,
+  tempFile,
+  withTempFile,
 } from "../api.js";
 
 describe("Writer and Reader with default codecs", () => {
@@ -255,6 +258,113 @@ describe("Writer and Reader with compact codecs", () => {
     expect("name" in record!).toBe(false);
     expect("quality" in record!).toBe(false);
     expect("key" in record!).toBe(false);
+  });
+});
+
+describe("Temporary files", () => {
+  test("round-trips records through a dryice-owned temporary file", () => {
+    const tmp = tempFile();
+    const path = tmp.path;
+    try {
+      const writer = new WriterBuilder().buildTemp(tmp);
+      writer.writeRecord(
+        Buffer.from("read1"),
+        Buffer.from("ACGTACGT"),
+        Buffer.from("!!!!!!!!")
+      );
+      expect(writer.finish()).toBeUndefined();
+
+      const reader = new ReaderBuilder().buildTemp(tmp);
+      const records = reader.records();
+
+      expect(records.length).toBe(1);
+      expect(Buffer.from(records[0].name).toString()).toBe("read1");
+      expect(Buffer.from(records[0].sequence).toString()).toBe("ACGTACGT");
+    } finally {
+      tmp.cleanup();
+    }
+
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("withTempFile cleans up after callback returns", () => {
+    let path = "";
+    const records = withTempFile((tmp) => {
+      path = tmp.path;
+      const writer = new WriterBuilder().twoBitExact().buildTemp(tmp);
+      writer.writeRecord(Buffer.from("r1"), Buffer.from("ACNGT"), Buffer.from("!!!!!"));
+      writer.finish();
+
+      return new ReaderBuilder().twoBitExact().buildTemp(tmp).records();
+    });
+
+    expect(records.length).toBe(1);
+    expect(Buffer.from(records[0].sequence).toString()).toBe("ACNGT");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("withTempFile keeps the file alive until an async callback settles", async () => {
+    let path = "";
+    const records = await withTempFile(async (tmp) => {
+      path = tmp.path;
+      const writer = new WriterBuilder().buildTemp(tmp);
+      writer.writeRecord(Buffer.from("r1"), Buffer.from("ACGT"), Buffer.from("!!!!"));
+      writer.finish();
+
+      await Promise.resolve();
+      expect(existsSync(path)).toBe(true);
+
+      return new ReaderBuilder().buildTemp(tmp).records();
+    });
+
+    expect(records.length).toBe(1);
+    expect(Buffer.from(records[0].sequence).toString()).toBe("ACGT");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("temp writers support kmer-oriented presets", () => {
+    const sequence = Buffer.from("ACGTGCTCAGAGACTCAGAGGATTACAGTTTACGTGCTCAGAGACTCAGAGGA");
+    const key = defaultMinimizerKey(sequence);
+    expect(key).not.toBeNull();
+
+    withTempFile((tmp) => {
+      const writer = new WriterBuilder().minimizersWithNames().buildTemp(tmp);
+      writer.writeRecordWithKey(Buffer.from("read1"), Buffer.from(""), Buffer.from(""), key!);
+      writer.finish();
+
+      const record = new ReaderBuilder().minimizersWithNames().buildTemp(tmp).nextRecord();
+      expect(record).not.toBeNull();
+      expect(Buffer.from(record!.name!).toString()).toBe("read1");
+      expect(record!.key).toEqual(key);
+    });
+  });
+
+  test("persist moves the temp file to a caller-owned path", () => {
+    const tmp = tempFile();
+    const persistedPath = `${tmp.path}.persisted`;
+    if (existsSync(persistedPath)) {
+      unlinkSync(persistedPath);
+    }
+
+    try {
+      const writer = new WriterBuilder().buildTemp(tmp);
+      writer.writeRecord(Buffer.from("r1"), Buffer.from("ACGT"), Buffer.from("!!!!"));
+      writer.finish();
+
+      expect(tmp.persist(persistedPath)).toBe(persistedPath);
+      expect(existsSync(persistedPath)).toBe(true);
+
+      const record = new ReaderBuilder().buildTemp(tmp).nextRecord();
+      expect(record).not.toBeNull();
+      expect(Buffer.from(record!.sequence).toString()).toBe("ACGT");
+
+      tmp.cleanup();
+      expect(existsSync(persistedPath)).toBe(true);
+    } finally {
+      if (existsSync(persistedPath)) {
+        unlinkSync(persistedPath);
+      }
+    }
   });
 });
 

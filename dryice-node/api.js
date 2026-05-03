@@ -1,5 +1,71 @@
 const native = require('./index.js')
 
+const nativeTempFile = Symbol('nativeTempFile')
+
+function warnCleanupFailure(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  process.emitWarning(`failed to clean up temporary dryice file: ${message}`)
+}
+
+function cleanupTempFile(tempFile) {
+  try {
+    tempFile.cleanup()
+  } catch (error) {
+    warnCleanupFailure(error)
+  }
+}
+
+function isPromiseLike(value) {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof value.then === 'function'
+  )
+}
+
+class TempFile {
+  #inner
+
+  constructor(inner = new native.TempFile()) {
+    this.#inner = inner
+  }
+
+  get path() {
+    return this.#inner.path
+  }
+
+  cleanup() {
+    return this.#inner.cleanup()
+  }
+
+  persist(path) {
+    return this.#inner.persist(path)
+  }
+
+  [nativeTempFile]() {
+    return this.#inner
+  }
+}
+
+function tempFile() {
+  return new TempFile(native.tempFile())
+}
+
+function withTempFile(callback) {
+  const tmp = tempFile()
+  try {
+    const result = callback(tmp)
+    if (isPromiseLike(result)) {
+      return Promise.resolve(result).finally(() => cleanupTempFile(tmp))
+    }
+    cleanupTempFile(tmp)
+    return result
+  } catch (error) {
+    cleanupTempFile(tmp)
+    throw error
+  }
+}
+
 class Reader {
   #inner
 
@@ -90,9 +156,33 @@ class WriterBuilder {
   build() {
     return new Writer(this.#inner.build())
   }
+
+  buildTemp(tempFile) {
+    return new TempWriter(this.#inner.buildTemp(tempFile[nativeTempFile]()))
+  }
 }
 
 class Writer {
+  #inner
+
+  constructor(inner) {
+    this.#inner = inner
+  }
+
+  writeRecord(name, sequence, quality) {
+    return this.#inner.writeRecord(name, sequence, quality)
+  }
+
+  writeRecordWithKey(name, sequence, quality, key) {
+    return this.#inner.writeRecordWithKey(name, sequence, quality, key)
+  }
+
+  finish() {
+    return this.#inner.finish()
+  }
+}
+
+class TempWriter {
   #inner
 
   constructor(inner) {
@@ -182,6 +272,10 @@ class ReaderBuilder {
   build(data) {
     return new Reader(this.#inner.build(data))
   }
+
+  buildTemp(tempFile) {
+    return new Reader(this.#inner.buildTemp(tempFile[nativeTempFile]()))
+  }
 }
 
 module.exports = {
@@ -189,6 +283,10 @@ module.exports = {
   defaultMinimizerKey: native.defaultMinimizerKey,
   Reader,
   ReaderBuilder,
+  TempFile,
+  TempWriter,
   Writer,
   WriterBuilder,
+  tempFile,
+  withTempFile,
 }

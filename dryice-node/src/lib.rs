@@ -1,5 +1,10 @@
 //! Node.js/TypeScript bindings for the `dryice` high-throughput genomic record container.
 
+use std::{
+    fs::File,
+    io::{Cursor, Read, Seek, SeekFrom, Write},
+};
+
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
@@ -13,7 +18,7 @@ use dryice::{
 };
 use dryice::{
     Bytes8Key, DryIceError, DryIceReader as RustReader, DryIceWriter as RustWriter, NoRecordKey,
-    SeqRecordLike,
+    SeqRecordLike, TempDryIceFile,
 };
 
 fn to_napi_err(e: DryIceError) -> napi::Error {
@@ -38,8 +43,7 @@ impl SeqRecordLike for SliceRecord<'_> {
     }
 }
 
-type W = Vec<u8>;
-type R = std::io::Cursor<Vec<u8>>;
+type BufferReader = Cursor<Vec<u8>>;
 
 macro_rules! dispatch_all_writers {
     ($self:expr, $method:ident ( $($arg:expr),* )) => {
@@ -73,7 +77,7 @@ macro_rules! dispatch_all_readers {
     };
 }
 
-enum WriterInner {
+enum WriterInner<W> {
     RawRawRaw(RustWriter<W, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitRawRaw(RustWriter<W, TwoBitExactCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitBinnedSplit(
@@ -95,7 +99,7 @@ enum WriterInner {
     ),
 }
 
-impl WriterInner {
+impl<W: Write> WriterInner<W> {
     fn write_record(&mut self, record: &SliceRecord<'_>) -> Result<()> {
         match self {
             Self::RawRawRaw(w) => w.write_record(record).map_err(to_napi_err),
@@ -155,12 +159,12 @@ impl WriterInner {
         }
     }
 
-    fn finish(self) -> Result<Vec<u8>> {
+    fn finish(self) -> Result<W> {
         dispatch_all_writers!(self, finish())
     }
 }
 
-enum ReaderInner {
+enum ReaderInner<R> {
     RawRawRaw(RustReader<R, RawAsciiCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitRawRaw(RustReader<R, TwoBitExactCodec, RawQualityCodec, RawNameCodec, NoRecordKey>),
     TwoBitBinnedSplit(
@@ -182,7 +186,7 @@ enum ReaderInner {
     ),
 }
 
-impl ReaderInner {
+impl<R: Read> ReaderInner<R> {
     fn next_record(&mut self) -> Result<bool> {
         dispatch_all_readers!(self, next_record()).map_err(to_napi_err)
     }
@@ -409,7 +413,7 @@ impl ReaderRequest {
     }
 }
 
-enum SelectedReaderInner {
+enum SelectedReaderInner<R> {
     RawRawRawName(
         RustSelectedReader<
             R,
@@ -566,8 +570,13 @@ enum SelectedReaderInner {
 }
 
 enum ReaderKind {
-    Full(ReaderInner),
-    Selected(SelectedReaderInner),
+    Buffer(ReaderKindInner<BufferReader>),
+    File(ReaderKindInner<File>),
+}
+
+enum ReaderKindInner<R> {
+    Full(ReaderInner<R>),
+    Selected(SelectedReaderInner<R>),
 }
 
 #[napi(object)]
@@ -642,10 +651,11 @@ macro_rules! dispatch_selected_readers {
     };
 }
 
-fn next_name_record<S, Q, N, K>(
+fn next_name_record<R, S, Q, N, K>(
     reader: &mut RustSelectedReader<R, S, Q, N, K, SelectName>,
 ) -> Result<Option<Record>>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -656,10 +666,11 @@ where
         .map(|record| Record::name_only(record.name())))
 }
 
-fn next_sequence_record<S, Q, N, K>(
+fn next_sequence_record<R, S, Q, N, K>(
     reader: &mut RustSelectedReader<R, S, Q, N, K, SelectSequence>,
 ) -> Result<Option<Record>>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -670,10 +681,11 @@ where
         .map(|record| Record::sequence_only(record.sequence())))
 }
 
-fn next_quality_record<S, Q, N, K>(
+fn next_quality_record<R, S, Q, N, K>(
     reader: &mut RustSelectedReader<R, S, Q, N, K, SelectQuality>,
 ) -> Result<Option<Record>>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -684,10 +696,11 @@ where
         .map(|record| Record::quality_only(record.quality())))
 }
 
-fn next_key_record<S, Q, N>(
+fn next_key_record<R, S, Q, N>(
     reader: &mut RustSelectedReader<R, S, Q, N, Bytes8Key, SelectKey>,
 ) -> Result<Option<Record>>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -701,10 +714,11 @@ where
     }
 }
 
-fn next_sequence_key_record<S, Q, N>(
+fn next_sequence_key_record<R, S, Q, N>(
     reader: &mut RustSelectedReader<R, S, Q, N, Bytes8Key, SelectSequenceKey>,
 ) -> Result<Option<Record>>
 where
+    R: Read,
     S: dryice::SequenceCodec,
     Q: dryice::QualityCodec,
     N: dryice::NameCodec,
@@ -719,7 +733,7 @@ where
     }
 }
 
-impl SelectedReaderInner {
+impl<R: Read> SelectedReaderInner<R> {
     fn next_record(&mut self) -> Result<Option<Record>> {
         dispatch_selected_readers!(self, {
             RawRawRawName => next_name_record,
@@ -742,31 +756,32 @@ impl SelectedReaderInner {
     }
 }
 
-fn build_writer(
+fn build_writer_inner<W: Write>(
+    inner: W,
     seq: &str,
     qual: &str,
     name: &str,
     key: &str,
     block_records: u32,
-) -> Result<WriterInner> {
+) -> Result<WriterInner<W>> {
     let n = block_records as usize;
     match (seq, qual, name, key) {
         ("raw", "raw", "raw", "none") => Ok(WriterInner::RawRawRaw(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .target_block_records(n)
                 .build(),
         )),
         ("two_bit_exact", "raw", "raw", "none") => Ok(WriterInner::TwoBitRawRaw(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .two_bit_exact()
                 .target_block_records(n)
                 .build(),
         )),
         ("two_bit_exact", "binned", "split", "none") => Ok(WriterInner::TwoBitBinnedSplit(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .two_bit_exact()
                 .binned_quality()
                 .split_names()
@@ -775,7 +790,7 @@ fn build_writer(
         )),
         ("two_bit_lossy_n", "binned", "split", "none") => Ok(WriterInner::LossyBinnedSplit(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .two_bit_lossy_n()
                 .binned_quality()
                 .split_names()
@@ -784,14 +799,14 @@ fn build_writer(
         )),
         ("raw", "raw", "raw", "bytes8") => Ok(WriterInner::RawRawRawB8(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .bytes8_key()
                 .target_block_records(n)
                 .build(),
         )),
         ("omitted", "omitted", "omitted", "bytes8") => Ok(WriterInner::RawOmitOmitB8(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .omit_sequence()
                 .omit_quality()
                 .omit_names()
@@ -801,7 +816,7 @@ fn build_writer(
         )),
         ("raw", "omitted", "omitted", "bytes8") => Ok(WriterInner::RawSeqOnlyB8(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .omit_quality()
                 .omit_names()
                 .bytes8_key()
@@ -810,7 +825,7 @@ fn build_writer(
         )),
         ("omitted", "omitted", "raw", "bytes8") => Ok(WriterInner::RawNameOnlyB8(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .omit_sequence()
                 .omit_quality()
                 .bytes8_key()
@@ -819,7 +834,7 @@ fn build_writer(
         )),
         ("two_bit_exact", "binned", "split", "bytes8") => Ok(WriterInner::TwoBitBinnedSplitB8(
             RustWriter::builder()
-                .inner(Vec::new())
+                .inner(inner)
                 .two_bit_exact()
                 .binned_quality()
                 .split_names()
@@ -833,31 +848,30 @@ fn build_writer(
     }
 }
 
-fn build_full_reader(data: Vec<u8>, profile: CodecProfile) -> Result<ReaderInner> {
-    let cursor = std::io::Cursor::new(data);
+fn build_full_reader<R: Read>(reader: R, profile: CodecProfile) -> Result<ReaderInner<R>> {
     match profile {
         CodecProfile::Raw => Ok(ReaderInner::RawRawRaw(
-            RustReader::new(cursor).map_err(to_napi_err)?,
+            RustReader::new(reader).map_err(to_napi_err)?,
         )),
         CodecProfile::TwoBitExactRaw => Ok(ReaderInner::TwoBitRawRaw(
-            RustReader::with_two_bit_exact(cursor).map_err(to_napi_err)?,
+            RustReader::with_two_bit_exact(reader).map_err(to_napi_err)?,
         )),
         CodecProfile::TwoBitExactBinnedSplit => Ok(ReaderInner::TwoBitBinnedSplit(
-            RustReader::with_codecs::<TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec>(cursor)
+            RustReader::with_codecs::<TwoBitExactCodec, BinnedQualityCodec, SplitNameCodec>(reader)
                 .map_err(to_napi_err)?,
         )),
         CodecProfile::TwoBitLossyBinnedSplit => Ok(ReaderInner::LossyBinnedSplit(
             RustReader::with_codecs::<TwoBitLossyNCodec, BinnedQualityCodec, SplitNameCodec>(
-                cursor,
+                reader,
             )
             .map_err(to_napi_err)?,
         )),
         CodecProfile::RawBytes8 => Ok(ReaderInner::RawRawRawB8(
-            RustReader::with_bytes8_key(cursor).map_err(to_napi_err)?,
+            RustReader::with_bytes8_key(reader).map_err(to_napi_err)?,
         )),
         CodecProfile::RawOmitOmitBytes8 => Ok(ReaderInner::RawOmitOmitB8(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .omit_sequence()
                 .omit_quality()
                 .omit_names()
@@ -867,7 +881,7 @@ fn build_full_reader(data: Vec<u8>, profile: CodecProfile) -> Result<ReaderInner
         )),
         CodecProfile::RawSeqOnlyBytes8 => Ok(ReaderInner::RawSeqOnlyB8(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .omit_quality()
                 .omit_names()
                 .bytes8_key()
@@ -876,7 +890,7 @@ fn build_full_reader(data: Vec<u8>, profile: CodecProfile) -> Result<ReaderInner
         )),
         CodecProfile::RawNameOnlyBytes8 => Ok(ReaderInner::RawNameOnlyB8(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .omit_sequence()
                 .omit_quality()
                 .bytes8_key()
@@ -885,7 +899,7 @@ fn build_full_reader(data: Vec<u8>, profile: CodecProfile) -> Result<ReaderInner
         )),
         CodecProfile::TwoBitExactBinnedSplitBytes8 => Ok(ReaderInner::TwoBitBinnedSplitB8(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .two_bit_exact()
                 .quality_codec::<BinnedQualityCodec>()
                 .name_codec::<SplitNameCodec>()
@@ -951,30 +965,29 @@ fn parse_projection(fields: &[String], key_kind: KeyKind) -> Result<Projection> 
     }
 }
 
-fn build_selected_reader(
-    data: Vec<u8>,
+fn build_selected_reader<R: Read>(
+    reader: R,
     profile: CodecProfile,
     projection: Projection,
-) -> Result<SelectedReaderInner> {
-    let cursor = std::io::Cursor::new(data);
+) -> Result<SelectedReaderInner<R>> {
     match (profile, projection) {
         (CodecProfile::Raw, Projection::Name) => Ok(SelectedReaderInner::RawRawRawName(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .select(SelectName)
                 .build()
                 .map_err(to_napi_err)?,
         )),
         (CodecProfile::Raw, Projection::Sequence) => Ok(SelectedReaderInner::RawRawRawSequence(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .select(SelectSequence)
                 .build()
                 .map_err(to_napi_err)?,
         )),
         (CodecProfile::Raw, Projection::Quality) => Ok(SelectedReaderInner::RawRawRawQuality(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .select(SelectQuality)
                 .build()
                 .map_err(to_napi_err)?,
@@ -982,7 +995,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactRaw, Projection::Name) => {
             Ok(SelectedReaderInner::TwoBitRawRawName(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .select(SelectName)
                     .build()
@@ -992,7 +1005,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactRaw, Projection::Sequence) => {
             Ok(SelectedReaderInner::TwoBitRawRawSequence(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .select(SelectSequence)
                     .build()
@@ -1002,7 +1015,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactRaw, Projection::Quality) => {
             Ok(SelectedReaderInner::TwoBitRawRawQuality(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .select(SelectQuality)
                     .build()
@@ -1012,7 +1025,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactBinnedSplit, Projection::Name) => {
             Ok(SelectedReaderInner::TwoBitBinnedSplitName(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1024,7 +1037,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactBinnedSplit, Projection::Sequence) => {
             Ok(SelectedReaderInner::TwoBitBinnedSplitSequence(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1036,7 +1049,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactBinnedSplit, Projection::Quality) => {
             Ok(SelectedReaderInner::TwoBitBinnedSplitQuality(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1048,7 +1061,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitLossyBinnedSplit, Projection::Name) => {
             Ok(SelectedReaderInner::LossyBinnedSplitName(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .sequence_codec::<TwoBitLossyNCodec>()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1060,7 +1073,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitLossyBinnedSplit, Projection::Sequence) => {
             Ok(SelectedReaderInner::LossyBinnedSplitSequence(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .sequence_codec::<TwoBitLossyNCodec>()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1072,7 +1085,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitLossyBinnedSplit, Projection::Quality) => {
             Ok(SelectedReaderInner::LossyBinnedSplitQuality(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .sequence_codec::<TwoBitLossyNCodec>()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1083,7 +1096,7 @@ fn build_selected_reader(
         },
         (CodecProfile::RawBytes8, Projection::Key) => Ok(SelectedReaderInner::RawRawRawB8Key(
             RustReader::builder()
-                .inner(cursor)
+                .inner(reader)
                 .bytes8_key()
                 .select(SelectKey)
                 .build()
@@ -1092,7 +1105,7 @@ fn build_selected_reader(
         (CodecProfile::RawBytes8, Projection::SequenceKey) => {
             Ok(SelectedReaderInner::RawRawRawB8SequenceKey(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .bytes8_key()
                     .select(SelectSequenceKey)
                     .build()
@@ -1102,7 +1115,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactBinnedSplitBytes8, Projection::Key) => {
             Ok(SelectedReaderInner::TwoBitBinnedSplitB8Key(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1115,7 +1128,7 @@ fn build_selected_reader(
         (CodecProfile::TwoBitExactBinnedSplitBytes8, Projection::SequenceKey) => {
             Ok(SelectedReaderInner::TwoBitBinnedSplitB8SequenceKey(
                 RustReader::builder()
-                    .inner(cursor)
+                    .inner(reader)
                     .two_bit_exact()
                     .quality_codec::<BinnedQualityCodec>()
                     .name_codec::<SplitNameCodec>()
@@ -1129,6 +1142,57 @@ fn build_selected_reader(
             "unsupported projection {:?} for codec profile {:?}",
             projection, profile,
         ))),
+    }
+}
+
+#[napi]
+pub struct TempFile {
+    inner: Option<TempDryIceFile>,
+}
+
+impl TempFile {
+    fn temp_file(&self) -> Result<&TempDryIceFile> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| napi::Error::from_reason("temporary file already cleaned up"))
+    }
+
+    fn open_file(&self) -> Result<File> {
+        self.temp_file()?.open().map_err(to_napi_err)
+    }
+}
+
+#[napi]
+impl TempFile {
+    #[napi(constructor)]
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            inner: Some(TempDryIceFile::new().map_err(to_napi_err)?),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn path(&self) -> Result<String> {
+        Ok(self.temp_file()?.path().to_string_lossy().into_owned())
+    }
+
+    #[napi]
+    pub fn cleanup(&mut self) -> Result<()> {
+        if let Some(temp_file) = self.inner.take() {
+            temp_file.cleanup().map_err(to_napi_err)?;
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn persist(&mut self, path: String) -> Result<String> {
+        let persisted = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| napi::Error::from_reason("temporary file already cleaned up"))?
+            .persist(path)
+            .map_err(to_napi_err)?;
+        Ok(persisted.to_string_lossy().into_owned())
     }
 }
 
@@ -1252,7 +1316,8 @@ impl WriterBuilder {
 
     #[napi]
     pub fn build(&self) -> Result<Writer> {
-        let inner = build_writer(
+        let inner = build_writer_inner(
+            Vec::new(),
             &self.sequence_codec,
             &self.quality_codec,
             &self.name_codec,
@@ -1261,11 +1326,31 @@ impl WriterBuilder {
         )?;
         Ok(Writer { inner: Some(inner) })
     }
+
+    #[napi]
+    pub fn build_temp(&self, temp_file: &TempFile) -> Result<TempWriter> {
+        let mut file = temp_file.open_file()?;
+        file.set_len(0)
+            .map_err(DryIceError::from)
+            .map_err(to_napi_err)?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(DryIceError::from)
+            .map_err(to_napi_err)?;
+        let inner = build_writer_inner(
+            file,
+            &self.sequence_codec,
+            &self.quality_codec,
+            &self.name_codec,
+            &self.record_key,
+            self.target_block_records,
+        )?;
+        Ok(TempWriter { inner: Some(inner) })
+    }
 }
 
 #[napi]
 pub struct Writer {
-    inner: Option<WriterInner>,
+    inner: Option<WriterInner<Vec<u8>>>,
 }
 
 #[napi]
@@ -1310,6 +1395,55 @@ impl Writer {
             .ok_or_else(|| napi::Error::from_reason("writer already finished"))?
             .finish()?;
         Ok(data.into())
+    }
+}
+
+#[napi]
+pub struct TempWriter {
+    inner: Option<WriterInner<File>>,
+}
+
+#[napi]
+impl TempWriter {
+    #[napi]
+    pub fn write_record(&mut self, name: Buffer, sequence: Buffer, quality: Buffer) -> Result<()> {
+        let record = SliceRecord {
+            name: &name,
+            sequence: &sequence,
+            quality: &quality,
+        };
+        self.inner
+            .as_mut()
+            .ok_or_else(|| napi::Error::from_reason("writer already finished"))?
+            .write_record(&record)
+    }
+
+    #[napi]
+    pub fn write_record_with_key(
+        &mut self,
+        name: Buffer,
+        sequence: Buffer,
+        quality: Buffer,
+        key: Buffer,
+    ) -> Result<()> {
+        let record = SliceRecord {
+            name: &name,
+            sequence: &sequence,
+            quality: &quality,
+        };
+        self.inner
+            .as_mut()
+            .ok_or_else(|| napi::Error::from_reason("writer already finished"))?
+            .write_record_with_key(&record, &key)
+    }
+
+    #[napi]
+    pub fn finish(&mut self) -> Result<()> {
+        self.inner
+            .take()
+            .ok_or_else(|| napi::Error::from_reason("writer already finished"))?
+            .finish()?;
+        Ok(())
     }
 }
 
@@ -1442,15 +1576,43 @@ impl ReaderBuilder {
             &self.selected_fields,
         )?;
 
+        let reader = Cursor::new(data.to_vec());
         let inner = match request.projection {
-            Projection::All => ReaderKind::Full(build_full_reader(data.to_vec(), request.profile)?),
-            projection => ReaderKind::Selected(build_selected_reader(
-                data.to_vec(),
+            Projection::All => ReaderKindInner::Full(build_full_reader(reader, request.profile)?),
+            projection => ReaderKindInner::Selected(build_selected_reader(
+                reader,
                 request.profile,
                 projection,
             )?),
         };
-        Ok(Reader { inner })
+        Ok(Reader {
+            inner: ReaderKind::Buffer(inner),
+        })
+    }
+
+    #[napi]
+    pub fn build_temp(&self, temp_file: &TempFile) -> Result<Reader> {
+        let request = ReaderRequest::from_builder(
+            &self.sequence_codec,
+            &self.quality_codec,
+            &self.name_codec,
+            &self.record_key,
+            &self.selected_fields,
+        )?;
+
+        let mut file = temp_file.open_file()?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(DryIceError::from)
+            .map_err(to_napi_err)?;
+        let inner = match request.projection {
+            Projection::All => ReaderKindInner::Full(build_full_reader(file, request.profile)?),
+            projection => {
+                ReaderKindInner::Selected(build_selected_reader(file, request.profile, projection)?)
+            },
+        };
+        Ok(Reader {
+            inner: ReaderKind::File(inner),
+        })
     }
 }
 
@@ -1463,27 +1625,20 @@ pub struct Reader {
 impl Reader {
     #[napi(factory)]
     pub fn open(data: Buffer) -> Result<Reader> {
-        let inner = ReaderKind::Full(build_full_reader(data.to_vec(), CodecProfile::Raw)?);
-        Ok(Reader { inner })
+        let inner = ReaderKindInner::Full(build_full_reader(
+            Cursor::new(data.to_vec()),
+            CodecProfile::Raw,
+        )?);
+        Ok(Reader {
+            inner: ReaderKind::Buffer(inner),
+        })
     }
 
     #[napi]
     pub fn next_record(&mut self) -> Result<Option<Record>> {
         match &mut self.inner {
-            ReaderKind::Full(inner) => {
-                let has_record = inner.next_record()?;
-                if !has_record {
-                    return Ok(None);
-                }
-
-                let name = inner.name();
-                let sequence = inner.sequence();
-                let quality = inner.quality();
-                let key = inner.record_key()?;
-
-                Ok(Some(Record::full(name, sequence, quality, key)))
-            },
-            ReaderKind::Selected(inner) => inner.next_record(),
+            ReaderKind::Buffer(inner) => next_reader_record(inner),
+            ReaderKind::File(inner) => next_reader_record(inner),
         }
     }
 
@@ -1495,6 +1650,30 @@ impl Reader {
         }
         Ok(records)
     }
+}
+
+fn next_reader_record<R: Read>(inner: &mut ReaderKindInner<R>) -> Result<Option<Record>> {
+    match inner {
+        ReaderKindInner::Full(inner) => {
+            let has_record = inner.next_record()?;
+            if !has_record {
+                return Ok(None);
+            }
+
+            let name = inner.name();
+            let sequence = inner.sequence();
+            let quality = inner.quality();
+            let key = inner.record_key()?;
+
+            Ok(Some(Record::full(name, sequence, quality, key)))
+        },
+        ReaderKindInner::Selected(inner) => inner.next_record(),
+    }
+}
+
+#[napi]
+pub fn temp_file() -> Result<TempFile> {
+    TempFile::new()
 }
 
 #[napi]

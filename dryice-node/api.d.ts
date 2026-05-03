@@ -38,6 +38,7 @@ export declare class ReaderBuilder<F extends readonly Field[] | null = null> {
   minimizersWithNames(): ReaderBuilder<F>
   select<const G extends readonly Field[]>(...fields: G): ReaderBuilder<G>
   build(data: Buffer): Reader<F>
+  buildTemp(tempFile: TempFile): Reader<F>
 }
 
 export declare class Writer {
@@ -61,7 +62,23 @@ export declare class WriterBuilder {
   minimizersWithNames(): this
   targetBlockRecords(n: number): this
   build(): Writer
+  buildTemp(tempFile: TempFile): TempWriter
+}
+
+export declare class TempFile {
+  constructor()
+  readonly path: string
+  cleanup(): void
+  persist(path: string): string
+}
+
+export declare class TempWriter {
+  writeRecord(name: Buffer, sequence: Buffer, quality: Buffer): void
+  writeRecordWithKey(name: Buffer, sequence: Buffer, quality: Buffer, key: Buffer): void
+  finish(): void
 }
 
 export declare function defaultPrefixKmerKey(sequence: Buffer): Buffer | null
 export declare function defaultMinimizerKey(sequence: Buffer): Buffer | null
+export declare function tempFile(): TempFile
+export declare function withTempFile<T>(callback: (tempFile: TempFile) => T): T

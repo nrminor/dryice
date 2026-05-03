@@ -41,6 +41,24 @@ for (const record of records) {
 }
 ```
 
+### Temporary files
+
+For spill/reload workflows, let `dryice` create the temporary file and clean it up when the workflow is done:
+
+```typescript
+import { ReaderBuilder, WriterBuilder, withTempFile } from "./api.js";
+
+const records = withTempFile((tmp) => {
+  const writer = new WriterBuilder().buildTemp(tmp);
+  writer.writeRecord(Buffer.from("read1"), Buffer.from("ACGT"), Buffer.from("!!!!"));
+  writer.finish();
+
+  return new ReaderBuilder().buildTemp(tmp).records();
+});
+```
+
+`withTempFile(...)` cleans up after either a synchronous callback returns or an async callback settles. If you need explicit control instead, use `tempFile()` with `try`/`finally` and call `tmp.cleanup()` yourself. Use `tmp.persist(path)` to move the file to a caller-owned location and disable automatic cleanup for that destination.
+
 ### Selective decoding
 
 ```typescript
@@ -123,6 +141,7 @@ The helper functions `defaultPrefixKmerKey(...)` and `defaultMinimizerKey(...)` 
 The package uses a handwritten public TypeScript facade layered on top of the generated NAPI bindings. The main types are:
 
 - `Writer` / `WriterBuilder` — write records with configurable codecs and keys
+- `TempFile` / `TempWriter` — file-backed temporary workflows that clean up explicitly or through `withTempFile(...)`
 - `Reader` / `ReaderBuilder` — read records with codec verification and optional selective decoding
 - `ProjectedRecord<F>` — a projection-aware record type used by the TypeScript facade for `select(...)`
 - `defaultPrefixKmerKey` / `defaultMinimizerKey` — helper functions for the built-in default packed kmer key representations
